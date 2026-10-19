@@ -40,15 +40,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - §10 of SOUNDNESS.md: exclusivity is by PATH (`overlap()` on field paths), not by whole-owner — `swap(p.a, p.b)` is sound and accepted; `swap(p.a, p.a)` rejected. Confirm `borrow.py` matches this if touching it.
 - A9 (drop ordering on early-exit paths `?`/`or:`/`return`/`break`) is explicitly UNSPECIFIED — be careful extending borrow.py around early returns.
 
+## CLI
+- `python3 minimc.py check <file.mim>` — parse + resolve + typecheck + borrow check, errors only, no codegen.
+- `python3 minimc.py build <file.mim> [-o out.wasm]` — full pipeline, writes a `.wasm` module.
+- Single entrypoint wrapping stages 1-8 above; exits 1 with `FAIL [<stage>]` + error list on the first failing stage.
+
 ## RUNNING TESTS
-- No pytest — these are standalone scripts with their own runner/`__main__` + `sys.exit(1)` on failure. Run directly:
-  - `python3 tools/test_parser.py` — parses every `.mim` in `examples/` + every python code-block embedded in `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md`, `docs/APRENDER-DEMOSTRACIONES.md`, `formal/CASES.md`.
-  - `python3 tools/test_borrow.py`
-  - `python3 tools/test_codegen.py`
-  - `python3 tools/test_encoder.py`
-  - `python3 tools/test_struct.py`
-- Run all: `for f in tools/test_*.py; do python3 "$f" || break; done`
+- No pytest — these are standalone scripts with their own runner/`__main__` + `sys.exit(1)` on failure.
+- Invoke as a module from the repo root (NOT `python3 tools/test_X.py` — some import as `tools.X` and need the root on `sys.path`):
+  - `python3 -m tools.test_parser` — parses every `.mim` in `examples/` + every python code-block embedded in `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md`, `docs/APRENDER-DEMOSTRACIONES.md`, `formal/CASES.md`.
+  - `python3 -m tools.test_borrow` — crash-only conformance (does NOT check verdicts).
+  - `python3 -m tools.test_cases_formal` — checks the borrow checker's actual RECHAZAR/ACEPTAR verdict against every canonical case in `formal/CASES.md`.
+  - `python3 -m tools.test_codegen`
+  - `python3 -m tools.test_encoder`
+  - `python3 -m tools.test_struct`
+- Run all: `for m in test_parser test_borrow test_cases_formal test_codegen test_encoder test_struct; do python3 -m tools.$m || break; done`
 - `docs/*.md` embedded code blocks are part of the conformance surface — editing examples in docs can break `test_parser.py`.
+- Known gap: `examples/wordcount.mim` currently fails borrow check (partial moves, not supported in v0.1) — `test_borrow.py` doesn't catch this since it only checks for crashes, not clean verdicts.
 
 ## BENCHMARKS
 - `tools/bench/` and `tools/bench2/`: same program in `.mim`/`.py`/`.rs` (+ typed python variant) for perf/token comparison (a_counter, b_shapes, c_total, d_borrow, wordcount).
