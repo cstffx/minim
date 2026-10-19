@@ -16,6 +16,12 @@ class CodegenError(Exception):
     pass
 
 
+def _unsupported(what, node=None):
+    span = getattr(node, "span", None)
+    loc = f"{span.line}:{span.col}" if span else "?"
+    raise CodegenError(f"{loc}: codegen no soporta {what} (MVP int/float/list/struct subset)")
+
+
 class WasmCodegen:
     def __init__(self, program, tc):
         self.program = program
@@ -590,8 +596,7 @@ class WasmCodegen:
                 self._gen_expr(st.value, code, qname)
             code += local_set(vi)
         else:
-            # skip unsupported
-            pass
+            _unsupported(f"sentencias de tipo {type(st).__name__}", st)
 
     def _gen_suite(self, suite, code, qname, fn, tail=False):
         stmts = (suite.stmts if hasattr(suite, "stmts") else [])
@@ -697,7 +702,7 @@ class WasmCodegen:
                     code += _uleb128_static(3)
                     code += _uleb128_static(off)
                 else:
-                    code += i64_const(0)
+                    _unsupported(f"la variable/nombre '{e.name}' (no es local ni campo conocido)", e)
         elif isinstance(e, BinOp):
             f = self._is_float(e, qname)
             self._gen_expr(e.left, code, qname)
@@ -724,6 +729,8 @@ class WasmCodegen:
                     code += F64_EQ
                 elif op == "!=":
                     code += F64_NE
+                else:
+                    _unsupported(f"el operador binario '{op}' (float)", e)
             else:
                 if op == "+":
                     code += I64_ADD
@@ -747,6 +754,8 @@ class WasmCodegen:
                     code += I64_EQ
                 elif op == "!=":
                     code += I64_NE
+                else:
+                    _unsupported(f"el operador binario '{op}'", e)
         elif isinstance(e, UnaryOp):
             if e.op == "-":
                 if self._is_float(e, qname):
@@ -757,6 +766,8 @@ class WasmCodegen:
                     code += i64_const(0)
                     self._gen_expr(e.operand, code, qname)
                     code += I64_SUB
+            else:
+                _unsupported(f"el operador unario '{e.op}'", e)
         elif isinstance(e, Postfix):
             # list index
             if (not (e.ops and e.ops[-1][0] == "call")) and e.ops and e.ops[0][0] == "index":
@@ -970,12 +981,10 @@ class WasmCodegen:
                         # default
                         if fdefault is not None:
                             self._gen_expr(fdefault, code, qname)
-                        elif wtype == WasmEncoder.F64:
-                            code += f64_const(0.0)
-                        elif wtype == WasmEncoder.I32:
-                            code += i32_const(0)
                         else:
-                            code += i64_const(0)
+                            _unsupported(
+                                f"campo '{fname}' de '{callee_name}' sin valor ni default en la llamada",
+                                e)
                     # store
                     if wtype == WasmEncoder.F64:
                         code += bytes([0x39])
@@ -1012,7 +1021,7 @@ class WasmCodegen:
                             if p.default is not None:
                                 self._gen_expr(p.default, code, qname)
                             else:
-                                code += i64_const(0)
+                                _unsupported(f"parametro '{p.name}' sin valor ni default", e)
                     code += CALL(self.func_index[callee_name])
                     return
             # Determine callee
@@ -1035,7 +1044,7 @@ class WasmCodegen:
                         if p.default is not None:
                             self._gen_expr(p.default, code, qname)
                         else:
-                            code += i64_const(0)
+                            _unsupported(f"parametro '{p.name}' sin valor ni default", e)
                 if callee_name == "print":
                     arg_expr = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
                     if isinstance(arg_expr, StrLit):
@@ -1047,14 +1056,13 @@ class WasmCodegen:
                 elif callee_name in self.func_index:
                     code += CALL(self.func_index[callee_name])
                 else:
-                    # unknown: drop args
-                    for _ in args:
-                        code += DROP
+                    _unsupported(f"llamada a funcion desconocida '{callee_name}'", e)
             else:
-                # field access or method: MVP treat as 0
-                code += i64_const(0)
+                _unsupported(
+                    "esta forma de acceso/llamada (map, string methods, modulos "
+                    "como fs/env, closures, o metodos no registrados)", e)
         else:
-            code += i64_const(0)
+            _unsupported(f"expresiones de tipo {type(e).__name__}", e)
 
 
 def compile_source(source):
