@@ -55,8 +55,10 @@ def desugar_for_stmt(st):
     out.append(LetStmt([Binding("name", "_i")], IntLit("0")))
     cond = BinOp("<", NameExpr("_i"), Postfix(NameExpr("_it"), [("field", "len")]))
     loop_body = []
+    # Bind by borrow, not by value: extracting a non-copyable element by
+    # index (`_it[_i]`) would otherwise count as a partial move of `_it`.
     loop_body.append(LetStmt([Binding("name", varname)],
-                    Postfix(NameExpr("_it"), [("index", NameExpr("_i"))])))
+                    BorrowExpr(Postfix(NameExpr("_it"), [("index", NameExpr("_i"))]))))
     loop_body.extend(body_stmts)
     # Touch `_it` after the user body so the borrow's last-use covers the
     # whole loop body, not just its last textual mention of `_it` -- the
