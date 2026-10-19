@@ -1,0 +1,171 @@
+(* ============================================================================
+   Minim 0.1 -- gramatica
+
+   Notacion:  { }  repeticion (0 o mas)      [ ]  opcional      |  alternativa
+              ( )  agrupacion               'x'  terminal
+
+   El lexer emite, como Python: NEWLINE, INDENT, DEDENT ademas de:
+     NAME  INT  FLOAT  STR  FSTR  RSTR  BYTES  MLSTR
+     y los simbolos de la seccion 1.6 de docs/DESIGN.md.
+
+   INDENT = exactamente un TABULADOR. Mezclar espacios y tabuladores es error.
+   La continuacion de linea solo existe dentro de ( ) [ ] { }.
+   Una sentencia termina en NEWLINE, DEDENT o EOF; ';' no es valido. DEDENT y EOF son
+terminadores que no se consumen (pertenecen al bloque que los emite); por eso el
+NEWLINE final de letStmt/assign/exprStmt/returnStmt/spawnStmt/awaitStmt/armBody es
+opcional cuando la expresion termina en un bloque (matchExpr).
+Los operadores de asignacion compuesta (+= ... **=) son un solo token; 'arg' es LL(2)
+(NAME ':' expr vs expr), resuelto por orden de alternativa en parsers PEG.
+   ============================================================================ *)
+
+program      = { stmt } EOF ;
+
+stmt         = useDecl | decl | simple ;
+
+(* ------------------------------------------------------------------ modulos *)
+
+useDecl      = 'use' path { ',' path } NEWLINE ;
+path         = NAME { '.' NAME } ;
+
+(* ------------------------------------------------- declaraciones (columna 0) *)
+
+decl         = letDecl | varDecl | fnDecl | typeDecl | traitDecl ;
+
+letDecl      = 'let' NAME [ ':' type ] '=' expr [ NEWLINE ] ;  (* constante de modulo *)
+varDecl      = 'var' binding { ',' binding } '=' expr [ NEWLINE ] ;  (* mutable de modulo *)
+
+fnDecl       = 'fn' NAME [ '[' tparams ']' ] '(' [ params ] ')' [ '->' type ] [ ':' ] suite ;
+
+params       = param { ',' param } [ ',' ] ;
+param        = [ 'var' | 'move' ] ( NAME | 'self' ) [ ':' type ] [ '=' expr ] ;
+tparams      = tparam { ',' tparam } ;
+tparam       = NAME [ ':' type ] ;                             (* acotado por trait *)
+
+typeDecl     = 'type' NAME [ '[' tparams ']' ] NEWLINE INDENT { member } DEDENT ;
+member       = field | variant | fnDecl | letDecl ;
+field        = NAME [ ':' type ] [ '=' expr ] NEWLINE ;
+variant      = 'case' NAME [ '(' [ fieldList ] ')' ]
+               [ NEWLINE INDENT { member } DEDENT ] ;
+fieldList    = fieldName { ',' fieldName } [ ',' ] ;
+fieldName    = NAME [ ':' type ] ;
+
+traitDecl    = 'trait' NAME NEWLINE INDENT { fnSig } DEDENT ;
+fnSig        = 'fn' NAME '(' [ params ] ')' [ '->' type ] NEWLINE ;
+
+(* --------------------------------------------------------------- sentencias *)
+
+simple       = letStmt | varStmt | assign | ifStmt | whileStmt | forStmt | matchStmt
+             | 'break' NEWLINE | 'continue' NEWLINE | returnStmt
+             | spawnStmt | awaitStmt | exprStmt ;
+
+letStmt      = 'let' binding { ',' binding } '=' expr [ NEWLINE ] ;
+varStmt      = 'var' binding { ',' binding } '=' expr [ NEWLINE ] ;
+assign       = place ( '=' | '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**=' )
+               expr [ NEWLINE ] ;
+place        = NAME { '.' NAME | '[' expr ']' } ;
+exprStmt     = expr [ NEWLINE ] ;
+
+ifStmt       = 'if' expr [ ':' ] suite { 'elif' expr [ ':' ] suite } [ 'else' [ ':' ] suite ] ;
+               (* la forma de una linea es ifExpr: 'if' expr ':' expr 'else' ':' expr *)
+whileStmt    = 'while' expr [ ':' ] suite ;
+forStmt      = 'for' binding { ',' binding } 'in' expr [ ':' ] suite ;
+matchStmt    = 'match' expr NEWLINE INDENT { arm } DEDENT ;
+arm          = 'case' pattern [ 'if' expr ] ':' armBody
+             | 'else' ':' armBody ;
+armBody      = expr [ NEWLINE ] | suite ;
+returnStmt   = 'return' [ expr ] [ NEWLINE ] ;
+spawnStmt    = 'spawn' expr [ NEWLINE ] ;
+awaitStmt    = 'await' expr [ NEWLINE ] ;
+
+suite        = NEWLINE INDENT { stmt } DEDENT        (* puede estar vacio *)
+             | NEWLINE INDENT DEDENT ;
+orBlock      = 'or' [ ':' ] suite ;                  (* el error queda en 'it' *)
+
+(* ---------------------------------------------------------------- patrones *)
+
+(* binding: patron irrefutable en LHS de 'let'/'for'. No admite 'NAME ':' pattern'
+   en la raiz, para que 'let x: int = 5' sea anotacion de tipo, no patron de campo. *)
+binding      = NAME [ ':' type ]
+              | NAME '(' [ pattern { ',' pattern } ] ')'        (* destruccion de variante *)
+              | '(' pattern { ',' pattern } ')' ;               (* tupla *)
+
+pattern      = literal
+             | NAME [ '(' [ pattern { ',' pattern } ] ')' ]   (* enlace o variante *)
+             | NAME ':' pattern                               (* campo por nombre  *)
+             | '(' pattern { ',' pattern } ')' ;
+
+(* -------------------------------------------------------------- expresiones *)
+(* precedencia, de menor a mayor *)
+
+expr         = orExpr ;
+orExpr       = andExpr { 'or' ( 'continue' | 'break' | andExpr | orBlock ) } ;
+andExpr      = notExpr { 'and' notExpr } ;
+notExpr      = [ 'not' ] cmpExpr ;
+cmpExpr      = bitorExpr { ( '==' | '!=' | '<' | '<=' | '>' | '>=' | 'is' 'not' | 'is' | 'in' )
+                           bitorExpr } ;              (* encadenables *)
+bitorExpr    = bitxorExpr { '|' bitxorExpr } ;
+bitxorExpr   = bitandExpr { '^' bitandExpr } ;
+bitandExpr   = shiftExpr { '&' shiftExpr } ;
+shiftExpr    = rangeExpr { ( '<<' | '>>' ) rangeExpr } ;
+rangeExpr    = addExpr [ ( '..' | '..=' ) addExpr ] ;
+addExpr      = mulExpr { ( '+' | '-' ) mulExpr } ;
+mulExpr      = unaryExpr { ( '*' | '/' | '//' | '%' ) unaryExpr } ;
+unaryExpr    = [ 'spawn' | 'await' | '-' | '~' ] powerExpr { '?' } ;
+powerExpr    = postfix [ '**' unaryExpr ] ;
+postfix      = primary { '.' NAME
+                       | '(' [ args ] ')'
+                       | '[' ( expr [ ':' [ expr ] ] | ':' [ expr ] ) ']'
+                       | 'as' type } ;
+args         = arg { ',' arg } [ ',' ] ;
+arg          = expr [ ':' expr ] ;
+primary      = literal
+             | NAME
+             | '&' postfix
+             | 'self'
+             | 'it'
+             | '(' expr ')'
+             | '(' expr ',' { expr ',' } ')'                (* tupla *)
+             | '[' [ args ] ']'                              (* lista *)
+             | '{' [ args ] '}'                              (* mapa o conjunto *)
+             | 'move' lambda
+             | lambda
+             | blockExpr ;
+lambda       = 'fn' [ params ] '=>' expr ;
+               (* 'fn' sin nombre: cuerpo de una sola expresion.
+                  'fn' seguido de '(' nunca es una declaracion (fnDecl exige NAME).
+                  El cuerpo en bloque (':' suite) queda para v0.1.1: dentro de
+                  ( ) [ ] { } no se emiten NEWLINE/INDENT/DEDENT (regla 12),
+                  asi que 'suite' no se puede parsear en un argumento; fuera de
+                  brackets funciona y comparte el fix de la decision 3. *)
+blockExpr    = ifExpr | matchExpr ;
+ifExpr       = 'if' expr ':' expr 'else' ':' expr ;
+matchExpr    = 'match' expr NEWLINE INDENT { arm } DEDENT
+             | 'match' expr ':' 'case' pattern [ 'if' expr ] ':' expr
+               { 'case' pattern [ 'if' expr ] ':' expr }
+               [ 'else' ':' expr ] ;   (* forma de una linea, en posicion de expresion *)
+
+(* -------------------------------------------------------------------- tipos *)
+
+type         = typeAtom [ '!' | '?' ] ;
+typeAtom     = NAME [ '[' type { ',' type } ']' ]        (* generico *)
+             | '[' type ']'                              (* lista *)
+             | 'map' '[' type ',' type ']'
+             | 'set' '[' type ']'
+             | '&' type
+             | '(' type ',' { type ',' } ')'             (* tupla *)
+             | '(' [ type { ',' type } ] ')' '->' type   (* funcion *)
+             | '(' type ')' ;
+
+(* ---------------------------------------------------------------- literales *)
+
+literal      = INT | FLOAT | STR | FSTR | RSTR | BYTES | MLSTR
+             | 'true' | 'false' | 'nil' ;
+
+(* -------------------------------------------------------- palabras reservadas *)
+
+(*  use let var fn type case trait
+    if elif else for in while break continue return match
+    and or not is as
+    self it move
+    spawn await
+    true false nil                                                          *)

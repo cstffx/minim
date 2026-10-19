@@ -1,0 +1,3 @@
+# Minim: el programa minimo.
+# Las sentencias de nivel superior SON el programa (no hace falta main).
+print("hola, Minim")

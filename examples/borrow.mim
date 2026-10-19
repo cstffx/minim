@@ -1,0 +1,37 @@
+# Propiedad y prestamos: todo lo que sigue compila.
+
+type Buf
+	data: [int] = []
+	fn len(self) -> int
+		data.len
+	fn push(var self, x: int)
+		data.push(x)
+	fn take(move self) -> [int]
+		data
+
+# Los parametros son prestamos por defecto: llamar NUNCA consume el argumento.
+fn sum(v: [int]) -> int
+	var t = 0
+	for x in v
+		t += x
+	t
+
+# 'var' declara el prestamo unico (equivale a &mut self / &mut Vec<T>).
+fn fill(var v: [int], n: int)
+	for i in 0..n
+		v.push(i)
+
+fn main()
+	var b = Buf()
+	b.push(1)
+	b.push(2)
+	print(sum(b.data))      # prestamo compartido: 'b' sigue vivo
+	fill(b.data, 5)         # prestamo unico: 'b' sigue vivo
+	print(f"len = {b.len}")
+
+	let raw = b.take()      # 'move self': consume 'b'
+	print(raw.len)
+
+	# Descomenta para ver el error del borrow checker:
+	# print(b.len)          # error: 'b' se movio en la linea anterior
+	# b.push(9)             # error: 'b' ya no es valido

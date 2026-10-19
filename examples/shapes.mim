@@ -1,0 +1,29 @@
+# Tipos suma + pattern matching. Sin enum, sin class, sin Dataclass,
+# sin return explicito: el ultimo valor del cuerpo es el retorno.
+
+type Shape
+	case Circle
+		r: float
+	case Rect
+		w: float
+		h: float
+	fn area(self) -> float
+		match self
+			case Circle(r): pi * r * r
+			case Rect(w, h): w * h
+	fn name(self) -> str
+		match self
+			case Circle: "circulo"
+			case Rect: "rectangulo"
+
+fn total(shapes: [Shape]) -> float
+	var t = 0.0
+	for s in shapes
+		t += s.area()
+	t
+
+fn main()
+	let shapes = [Shape.Circle(1.5), Shape.Rect(2, 3)]
+	for s in shapes
+		print(f"{s.name()}: {s.area():.2f}")
+	print(f"total: {total(shapes):.2f}")
