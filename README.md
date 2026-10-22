@@ -119,5 +119,10 @@ Medido con tokenizadores BPE reales (`o200k_base` / `cl100k_base`) sobre 5 progr
 | wordcount | 130 / 132 | 154 / 153 | 206 / 205 | 272 / 266 |
 | **TOTAL** | **341 / 343** | **400 / 400** | **469 / 469** | **595 / 588** |
 
-Valores `o200k_base / cl100k_base`. Ahorro total de Minim: **14.7%** vs Python,
-**27.3%** vs Python tipado y **42.7%** vs Rust (tokenizador `o200k_base`).
+Valores `o200k_base / cl100k_base`.
+
+| Comparación (total, o200k_base) | Ahorro de tokens de Minim |
+|---|---:|
+| Minim vs Python | 14.7% |
+| Minim vs Python tipado | 27.3% |
+| Minim vs Rust | 42.7% |
