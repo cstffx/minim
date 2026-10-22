@@ -17,6 +17,19 @@ fn main()
 
 El código completo de cada versión está en la carpeta [`code/`](code/).
 
+## Lenguajes aún más tersos
+
+APL, J y K pueden ganar en brevedad (a costa de legibilidad). Ejemplos del mismo
+problema en [`code/apl.md`](code/apl.md), [`code/j.md`](code/j.md) y
+[`code/k.md`](code/k.md):
+
+| Lenguaje | Tokens (o200k / cl100k) |
+|---|---:|
+| APL | 47 / 52 |
+| J | 15 / 15 |
+| K | 18 / 18 |
+| Minim | 130 / 132 |
+
 ## Métrica real del ahorro de tokens
 
 Medido con tokenizadores BPE reales (`o200k_base` / `cl100k_base`) sobre 5 programas
