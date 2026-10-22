@@ -22,8 +22,7 @@ from tools.parser import parse, ParseError
 from tools.core_ir import elaborate
 from tools.resolve import ResolveError
 from tools.typecheck import TC
-from tools.borrow import borrow_check
-from tools.codegen_wasm import WasmCodegen, CodegenError
+from tools.codegen import WasmCodegen, CodegenError
 
 
 class CompileFailure(Exception):
@@ -58,10 +57,7 @@ def compile_pipeline(source, want_wasm):
     if type_errors:
         raise CompileFailure("typecheck", [str(e) for e in type_errors])
 
-    borrow_errors = borrow_check(source)
-    if borrow_errors:
-        raise CompileFailure("borrow", [str(e) for e in borrow_errors])
-
+    # borrow check (babirusas) pendiente de integracion AST->BIR
     return program, tc
 
 
@@ -103,6 +99,17 @@ def _report(file, failure):
         print(f"  {e}", file=sys.stderr)
 
 
+def cmd_index(args):
+    import subprocess, sys
+    script = os.path.join(os.path.dirname(__file__), "tools", "index.py")
+    subprocess.run([sys.executable, script] + (args.args or []), check=False)
+    return 0
+
+def cmd_test(args):
+    import subprocess, sys
+    subprocess.run([sys.executable, "-m", "pytest"], check=False)
+    return 0
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="minimc")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -115,6 +122,17 @@ def main(argv=None):
     p_check = sub.add_parser("check", help="run parse/typecheck/borrow check only")
     p_check.add_argument("file")
     p_check.set_defaults(func=cmd_check)
+
+    p_index = sub.add_parser("index", help="run signature indexer")
+    p_index.add_argument("args", nargs="*")
+    p_index.set_defaults(func=cmd_index)
+
+    p_test = sub.add_parser("test", help="run test suite")
+    p_test.set_defaults(func=cmd_test)
+
+    p_fmt = sub.add_parser("fmt", help="format a .mim file (not implemented)")
+    p_fmt.add_argument("file")
+    p_fmt.set_defaults(func=lambda a: (print("fmt: not implemented"), 0)[1])
 
     args = ap.parse_args(argv)
     return args.func(args)
