@@ -1,0 +1,12 @@
+```python
+type Counter
+	n: int = 0
+	fn inc(var self, by: int = 1) -> int
+		n += by
+		n
+
+var c = Counter()
+c.inc()
+c.inc(3)
+print(c.n)
+```

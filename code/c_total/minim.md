@@ -1,0 +1,9 @@
+```python
+fn total(lines: [str]) -> int
+	var t = 0
+	for s in lines
+		let n = s.trim().parse[int]() or continue
+		if n % 2 == 0
+			t += n
+	t
+```

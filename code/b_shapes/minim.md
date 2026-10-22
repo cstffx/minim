@@ -1,0 +1,12 @@
+```python
+type Shape
+	case Circle
+		r: float
+	case Rect
+		w: float
+		h: float
+	fn area(self) -> float
+		match self
+			case Circle(r): pi * r * r
+			case Rect(w, h): w * h
+```
