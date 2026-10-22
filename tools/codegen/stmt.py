@@ -87,6 +87,34 @@ class StmtMixin:
                 self._gen_module_decl(st, code, qname)
                 return
             if isinstance(st, (LetStmt, VarStmt)):
+                # tuple destructuring: let a, b = pair()
+                vty = self._tc_type(st.value, qname)
+                pats = []
+                for b in st.bindings:
+                    if getattr(b, "kind", None) == "tuple":
+                        pats.extend(getattr(b, "tuple_patterns", None) or [])
+                    elif getattr(b, "kind", None) == "name" and b.name:
+                        pats.append(b)
+                if (isinstance(vty, tuple) and vty[0] == "tuple"
+                        and (len(st.bindings) > 1 or any(getattr(b, "kind", None) == "tuple" for b in st.bindings))):
+                    self._gen_expr(st.value, code, qname)
+                    code += GLOBAL_SET(self.tuple_base_global)
+                    _size, fields = self._tuple_layout(vty)
+                    for i, b in enumerate(pats):
+                        if getattr(b, "kind", None) != "name" or not b.name or i >= len(fields):
+                            continue
+                        wt, off, _fty = fields[i]
+                        code += GLOBAL_GET(self.tuple_base_global)
+                        if wt == WasmEncoder.F64:
+                            code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(off)
+                        elif wt == WasmEncoder.I32:
+                            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(off)
+                        else:
+                            code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(off)
+                        if b.name not in self.locals_map[qname]:
+                            self.locals_map[qname][b.name] = len(self.locals_map[qname])
+                        code += local_set(self.locals_map[qname][b.name])
+                    return
                 # evaluate value
                 self._gen_expr(st.value, code, qname)
                 # track lambda vars
@@ -149,7 +177,16 @@ class StmtMixin:
                 self._bool_cond(st.cond, code, qname)
                 code += I32_EQZ
                 code += bytes([0x0D, 0x01])  # br_if 1 (exit)
-                self._gen_suite(st.body, code, qname, fn, False)
+                fc = getattr(st, "_for_continue_count", None)
+                if fc is not None:
+                    code += BLOCK(BLK_VOID)
+                    self._open_block("for_continue")
+                    self._gen_suite(Suite(st.body.stmts[:fc]), code, qname, fn, False)
+                    self._close_block()
+                    code += END
+                    self._gen_suite(Suite(st.body.stmts[fc:]), code, qname, fn, False)
+                else:
+                    self._gen_suite(st.body, code, qname, fn, False)
                 code += bytes([0x0C, 0x00])  # br 0 (loop)
                 self._close_block()  # loop
                 code += END
@@ -158,11 +195,17 @@ class StmtMixin:
             elif isinstance(st, BreakStmt):
                 code += self._branch_to("exit")
             elif isinstance(st, ContinueStmt):
-                code += self._branch_to("loop")
+                target = "loop"
+                for k, _d in reversed(getattr(self, "ctrl_stack", [])):
+                    if k in ("loop", "for_continue"):
+                        target = k
+                        break
+                code += self._branch_to(target)
             elif isinstance(st, Assign):
                 self._gen_assign(st, code, qname)
             elif isinstance(st, MatchStmt):
-                self._gen_match_core(st.expr, st.arms, code, qname, fn, want_value=False)
+                mv = is_last and self._stmt_type(st, qname) not in (None, NIL)
+                self._gen_match_core(st.expr, st.arms, code, qname, fn, want_value=mv)
             else:
                 _unsupported(f"sentencias de tipo {type(st).__name__}", st)
 

@@ -20,6 +20,8 @@ class LayoutsMixin:
                         return WasmEncoder.I32
                 if ty[0] == "named":
                     return WasmEncoder.I32
+                if ty[0] in ("opt", "res", "borrow"):
+                    return self._wasm_type(ty[1])
                 if ty[0] in ("list", "map", "set", "tuple", "func"):
                     return WasmEncoder.I32
             return WasmEncoder.I64
@@ -354,6 +356,8 @@ class LayoutsMixin:
                 if isinstance(stmt, FnDecl):
                     if stmt.name.startswith("_") or stmt.name.split(".")[-1].startswith("_"):
                         continue
+                    if "$" in stmt.name:
+                        continue
                     if stmt.name in self.func_index:
                         self.enc.add_export_func(stmt.name, self.func_index[stmt.name])
             self.enc.add_export_func("_start", self.func_index["_start"])
@@ -442,9 +446,9 @@ class LayoutsMixin:
                             if offset == 0:
                                 offset = 8
                             vfields[v.name] = fields
-                            if offset - 8 > max_payload:
-                                max_payload = offset - 8
-                        size = 8 + (max_payload if max_payload > 0 else 0)
+                            if offset > max_payload:
+                                max_payload = offset
+                        size = 8 + max_payload
                         if size < 8:
                             size = 8
                         self.variant_index[stmt.name] = vindex

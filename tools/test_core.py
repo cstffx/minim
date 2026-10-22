@@ -149,6 +149,114 @@ print(GREETING)
 print(bump())
 print(bump())
 """, "hola12"),
+
+    ("tipos producto y suma con metodos", """
+type Shape
+	case Circle
+		r: float
+	case Rect
+		w: float
+		h: float
+	fn area(self) -> float
+		match self
+			case Circle(r): pi * r * r
+			case Rect(w, h): w * h
+	fn name(self) -> str
+		match self
+			case Circle: "circulo"
+			case Rect: "rectangulo"
+
+fn main()
+	let c = Shape.Circle(1.5)
+	let r = Shape.Rect(2, 3)
+	print(f"{c.area():.2f}{r.area():.2f}{c.name()}{r.name()}")
+""", "7.076.00circulorectangulo"),
+
+    ("genericos y trait acotado", """
+trait Ord
+	fn cmp(self, o: Self) -> int
+
+type Num
+	v: int
+	fn cmp(self, o: Num) -> int
+		v - o.v
+
+fn max[T: Ord](a: T, b: T) -> T
+	if a.cmp(b) > 0
+		a
+	else
+		b
+
+fn first[T](xs: [T]) -> T
+	xs[0]
+
+fn main()
+	print(max(Num(v: 3), Num(v: 5)).v)
+	print(first(["a", "b"]))
+""", "5a"),
+
+    ("colecciones: list, map, set y tuplas", """
+fn main()
+	let l = [3, 1, 2]
+	l.sort()
+	print(f"{l[0]}{l[1]}{l[2]}")
+	let s = l.slice(0, 2)
+	print(s.len())
+	l.reverse()
+	print(l[1])
+	let m = {"a": 1, "b": 2}
+	m.del("a")
+	print(m["b"])
+	let ks = m.keys()
+	print(ks[0])
+	let vs = m.values()
+	print(vs[0])
+	let st = {1, 2, 2}
+	st.add(3)
+	st.remove(1)
+	print(st.len())
+	let x, y = (7, "z")
+	print(f"{x}{y}")
+""", "123222b227z"),
+
+    ("opcionales, errores, ? y or:", """
+fn half(x: int) -> int!
+	if x % 2 == 0
+		return x // 2
+	err("impar", 3)
+
+fn inc(x: int) -> int!
+	let y = half(x)?
+	y + 1
+
+fn find(x: int) -> int?
+	if x > 0
+		return x
+	nil
+
+fn main()
+	let a = inc(4) or:
+		-1
+	let b = inc(3) or:
+		print(it)
+		-1
+	let c = find(9) or:
+		-1
+	let d = find(-1) or:
+		-1
+	print(f"{a}{b}{c}{d}")
+""", "impar3-19-1"),
+
+    ("conversiones as, str y parse", """
+fn main()
+	let a = 3.9 as int
+	let b = 3 as float
+	let c = "42".parse[int]() or:
+		-1
+	let d = "1.5".parse[float]() or:
+		-1.0
+	print(f"{a} {b:.1f} {c} {d:.1f} {65 as str} {str(true)}")
+""", "3 3.0 42 1.5 65 true"),
 ]
 
 

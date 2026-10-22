@@ -18,12 +18,50 @@ def V(name): return ("var",name)
 def F(params,ret,tparams=(),builtin=None,defaults=()):
     return ("func", (tuple(params) if params is not None else None), ret, tuple(tparams), builtin, tuple(defaults))
 
+def _bound_name(bound):
+    if isinstance(bound,TypeName): return bound.name
+    if isinstance(bound,Type) and isinstance(bound.node,TypeName): return bound.node.name
+    return getattr(bound,"name",str(bound))
+
+def _tyname(ty):
+    if ty is None: return "?"
+    if ty[0]=="p": return ty[1]
+    if ty[0]=="named": return ty[1]
+    if ty[0]=="list": return f"[{_tyname(ty[1])}]"
+    if ty[0]=="map": return f"map[{_tyname(ty[1])}, {_tyname(ty[2])}]"
+    if ty[0]=="set": return f"set[{_tyname(ty[1])}]"
+    if ty[0]=="opt": return f"{_tyname(ty[1])}?"
+    if ty[0]=="res": return f"{_tyname(ty[1])}!"
+    if ty[0]=="tuple": return "(" + ", ".join(_tyname(t) for t in ty[1]) + ")"
+    return str(ty)
+
 class TypeCheckError(Exception):
     def __init__(self,msg,node=None):
         span=getattr(node,"span",None)
         loc=f"{span.line}:{span.col}" if span else "?"
         super().__init__(f"{loc}: {msg}")
         self.node=node
+
+# Structural field tables, populated by TC. Minim has no inheritance: a product
+# type is defined by its fields, so two differently-named products are
+# compatible when their field names/types match exactly.
+_STRUCT_FIELDS = {}
+_SUM_TYPES = set()
+_COMPAT_GUARD = set()
+
+def _struct_compat(a,b):
+    if a[1] in _SUM_TYPES or b[1] in _SUM_TYPES:
+        return False
+    fa=_STRUCT_FIELDS.get(a[1]); fb=_STRUCT_FIELDS.get(b[1])
+    if fa is None or fb is None: return False
+    if [n for n,_ in fa] != [n for n,_ in fb]: return False
+    key=(a[1],b[1])
+    if key in _COMPAT_GUARD: return True
+    _COMPAT_GUARD.add(key)
+    try:
+        return all(compat(x,y) for (_,x),(_,y) in zip(fa,fb))
+    finally:
+        _COMPAT_GUARD.discard(key)
 
 def compat(a,b):
     if a is None or b is None: return True
@@ -44,10 +82,47 @@ def compat(a,b):
             if len(a[1])!=len(b[1]): return False
             return all(compat(x,y) for x,y in zip(a[1],b[1]))
         if a[0]=="named":
-            if a[1]!=b[1] or len(a[2])!=len(b[2]): return False
-            return all(compat(x,y) for x,y in zip(a[2],b[2]))
+            if a[1]==b[1]:
+                if len(a[2])!=len(b[2]): return False
+                return all(compat(x,y) for x,y in zip(a[2],b[2]))
+            return _struct_compat(a,b)
         if a[0]=="func": return True
+    if a[0]=="named" and b[0]=="named":
+        return _struct_compat(a,b)
     return False
+
+def merge_types(a,b):
+    """Least upper bound used for if/match/return branch joins.
+
+    `nil` lifts to `T?` and `err` lifts to `T!`; this keeps the inference local
+    (no constraint solver) while accepting the error/optional idioms.
+    """
+    if a is None: return b
+    if b is None: return a
+    if a==b: return a
+    if a[0]=="u": return b
+    if b[0]=="u": return a
+    for cont in ("opt","res"):
+        if a[0]==cont and compat(b,a): return a
+        if b[0]==cont and compat(a,b): return b
+    if a==("p","nil") and b==("p","nil"): return a
+    if a==("p","nil"):
+        if b==("err",): return b
+        return b if b[0] in ("opt","res") else O(b)
+    if b==("p","nil"):
+        if a==("err",): return a
+        return a if a[0] in ("opt","res") else O(a)
+    if a==("err",): return b if b[0]=="res" else R(b)
+    if b==("err",): return a if a[0]=="res" else R(a)
+    if a[0]=="res" or b[0]=="res":
+        return R(merge_types(a[1] if a[0]=="res" else a,
+                          b[1] if b[0]=="res" else b))
+    if a[0]=="opt" or b[0]=="opt":
+        return O(merge_types(a[1] if a[0]=="opt" else a,
+                           b[1] if b[0]=="opt" else b))
+    if compat(a,b): return a
+    if compat(b,a): return b
+    return UNKNOWN
 
 def apply(ty,subst):
     if ty is None: return None
@@ -65,6 +140,20 @@ def apply(ty,subst):
     if ty[0]=="named": return ("named",ty[1],tuple(apply(t,subst) for t in ty[2]))
     return ty
 
+def _subst_type(ty,name,repl):
+    if ty is None: return None
+    if ty[0]=="named" and ty[1]==name and not ty[2]: return repl
+    if ty[0]=="list": return ("list",_subst_type(ty[1],name,repl))
+    if ty[0]=="map": return ("map",_subst_type(ty[1],name,repl),_subst_type(ty[2],name,repl))
+    if ty[0]=="set": return ("set",_subst_type(ty[1],name,repl))
+    if ty[0]=="tuple": return ("tuple",tuple(_subst_type(t,name,repl) for t in ty[1]))
+    if ty[0] in ("opt","res","borrow"): return (ty[0],_subst_type(ty[1],name,repl))
+    if ty[0]=="func":
+        params=None if ty[1] is None else tuple(_subst_type(t,name,repl) for t in ty[1])
+        return ("func",params,_subst_type(ty[2],name,repl),ty[3],ty[4],ty[5] if len(ty)>5 else ())
+    if ty[0]=="named": return ("named",ty[1],tuple(_subst_type(t,name,repl) for t in ty[2]))
+    return ty
+
 class TC:
     def __init__(self,program):
         self.program=program
@@ -74,9 +163,34 @@ class TC:
         for e in res_errs:
             self.errors.append(TypeCheckError(str(e),getattr(e,"node",None)))
         self.type_defs={s.name:s for s in program.stmts if isinstance(s,TypeDecl)}
-        self.module_aliases=dict(getattr(program,"merged_modules",{}))
+        self.traits={s.name:s for s in program.stmts if isinstance(s,TraitDecl)}
+        self.generic_bounds={}
+        for s in program.stmts:
+            if isinstance(s,(FnDecl,TypeDecl)):
+                for tp in (s.tparams or []):
+                    if tp.bound is not None:
+                        self.generic_bounds[(s.name,tp.name)]=_bound_name(tp.bound)
+        self.bounds={}
         self.cur_type=None; self.cur_func=None; self.tvs=set(); self.mono=set()
+        self._register_structs()
+        self.module_aliases=dict(getattr(program,"merged_modules",{}))
         self._register()
+    def _register_structs(self):
+        _STRUCT_FIELDS.clear(); _SUM_TYPES.clear()
+        for name,td in self.type_defs.items():
+            variants=[m.node for m in td.members if isinstance(m.node,Variant)]
+            if variants:
+                _SUM_TYPES.add(name)
+                continue
+            if td.tparams:
+                continue
+            fields=[]
+            for m in td.members:
+                if isinstance(m.node,Field):
+                    f=m.node
+                    ft=self._atype(f.type_) if f.type_ is not None else UNKNOWN
+                    fields.append((f.name,ft))
+            _STRUCT_FIELDS[name]=fields
     def err(self,msg,node=None): self.errors.append(TypeCheckError(msg,node))
     def _register(self):
         for s in self.program.stmts:
@@ -155,6 +269,36 @@ class TC:
         return apply(ty,m)
     def check(self):
         self.check_program(); return self.errors
+    def is_copy(self, ty, seen=None):
+        """Structural copyability (docs/DESIGN.md §7): primitives, strings,
+        bytes, nil and tuples/products whose fields are all copyable are copy
+        types. Collections (list/map/set), tasks and functions move."""
+        if ty is None: return True
+        if seen is None: seen=set()
+        if ty[0]=="p": return True
+        if ty[0] in ("borrow","func"): return True
+        if ty[0] in ("list","map","set"): return False
+        if ty[0]=="tuple":
+            return all(self.is_copy(t,seen) for t in ty[1])
+        if ty[0] in ("opt","res"):
+            return self.is_copy(ty[1],seen)
+        if ty[0]=="named":
+            if ty[1] in seen: return False
+            td=self.type_defs.get(ty[1])
+            if td is None: return False
+            seen=seen|{ty[1]}
+            fields=[]
+            for m in td.members:
+                if m.kind=="field":
+                    ft=self._atype(m.node.type_) if m.node.type_ is not None else UNKNOWN
+                    fields.append(self._sub(ft,td.tparams,ty[2]))
+                elif m.kind=="variant":
+                    for fm in getattr(m.node,"members",[]) or []:
+                        if isinstance(fm.node,Field):
+                            ft=self._atype(fm.node.type_) if fm.node.type_ is not None else UNKNOWN
+                            fields.append(self._sub(ft,td.tparams,ty[2]))
+            return all(self.is_copy(t,seen) for t in fields)
+        return False
     def check_program(self):
         for s in self.program.stmts:
             if isinstance(s,LetDecl): self._letdecl(s,self.module_scope)
@@ -235,6 +379,8 @@ class TC:
                 for p in (pat.patterns or []): self._bindname(p,UNKNOWN,scope)
     def _func(self,f,scope,selftype):
         tps=set(t.name for t in (f.tparams or [])); self.tvs|=tps
+        old_bounds=self.bounds
+        self.bounds={tp.name:_bound_name(tp.bound) for tp in (f.tparams or []) if tp.bound is not None}
         old_func=self.cur_func; old_type=self.cur_type; self.cur_type=selftype
         params=[]
         for p in f.params:
@@ -264,6 +410,7 @@ class TC:
         if sym is not None:
             sym.ty=F(params,ret,[t.name for t in (f.tparams or [])],None)
         self.cur_func=old_func; self.cur_type=old_type; self.tvs-=tps
+        self.bounds=old_bounds
         return ret
     def _typedecl(self,td,scope):
         old_type=self.cur_type; self.cur_type=td.name
@@ -335,7 +482,7 @@ class TC:
             if s.else_ is not None: arms.append(self.suite(s.else_,scope))
             ct2=arms[0]
             for t in arms[1:]:
-                if not compat(t,ct2) and not compat(ct2,t): ct2=UNKNOWN
+                ct2=merge_types(ct2,t)
             return ct2
         if isinstance(s,WhileStmt):
             ct=self.expr(s.cond,scope)
@@ -394,7 +541,7 @@ class TC:
                 arms.append(bt)
             ct=arms[0] if arms else NIL
             for t in arms[1:]:
-                if not compat(t,ct) and not compat(ct,t): ct=UNKNOWN
+                ct=merge_types(ct,t)
             return ct
         if isinstance(s,ReturnStmt):
             vt=self.expr(s.value,scope) if s.value is not None else NIL
@@ -465,9 +612,51 @@ class TC:
             elif part[0]=="index":
                 idx=self.expr(part[1],scope); ty=self.idx(ty,idx)
         return ty
+    def _trait_method(self, trait_name, method_name, self_ty):
+        tr=self.traits.get(trait_name)
+        if tr is None: return None
+        for sig in tr.methods:
+            if sig.name!=method_name: continue
+            def subst(t):
+                if t is None: return UNKNOWN
+                ty=self._atype(t)
+                return _subst_type(ty,"Self",self_ty)
+            params=[]
+            for i,p in enumerate(sig.params):
+                if p.name=="self": continue
+                params.append(subst(p.type_))
+            ret=subst(sig.ret) if sig.ret is not None else UNKNOWN
+            return F(params,ret,(),None)
+        return None
+    def struct_fields(self, name, targs=()):
+        td=self.type_defs.get(name)
+        if td is None: return []
+        out=[]
+        for m in td.members:
+            if m.kind=="field":
+                ft=self._atype(m.node.type_) if m.node.type_ is not None else UNKNOWN
+                out.append((m.node.name,self._sub(ft,td.tparams,targs)))
+        return out
+    def trait_satisfied(self, ty, trait_name):
+        """Structural trait check: a type satisfies a trait when it exposes all
+        the trait's methods (same names). Dispatch is static."""
+        tr=self.traits.get(trait_name)
+        if tr is None: return True
+        if ty is None or ty[0] in ("u","var"): return True
+        if ty[0]!="named": return False
+        td=self.type_defs.get(ty[1])
+        if td is None: return False
+        names={m.node.name for m in td.members if m.kind=="fn"}
+        return all(sig.name in names for sig in tr.methods)
     def field(self,base,name,node):
         bt=base
         if bt[0]=="borrow": bt=bt[1]
+        if bt[0]=="var":
+            tr=self.bounds.get(bt[1])
+            if tr is not None:
+                sig=self._trait_method(_bound_name(tr),name,bt)
+                if sig is not None: return sig
+            self.err(f"cannot access {name} on {bt}",node); return UNKNOWN
         if bt[0]=="tuple":
             try: i=int(name)
             except (TypeError,ValueError): i=-1
@@ -559,6 +748,8 @@ class TC:
             E=bt[1]
             if name=="len": return F((),INT,(),"set.len")
             if name=="contains": return F((E,),BOOL,(),"set.contains")
+            if name in ("insert","add","push"): return F((E,),NIL,(),"set.insert")
+            if name in ("remove","del"): return F((E,),NIL,(),"set.remove")
             return F((),UNKNOWN,(),f"set.{name}")
         if bt[0]=="named":
             td=self.type_defs.get(bt[1]); targs=bt[2]
@@ -598,7 +789,8 @@ class TC:
         bt=base
         if bt[0]=="borrow": bt=bt[1]
         if bt[0]=="list": return bt[1]
-        if bt[0]=="str": return STR
+        if bt==STR: return STR
+        if bt==BYTES: return INT
         if bt[0]=="map": return bt[2]
         if bt[0]=="tuple":
             if len(bt[1])>0: return bt[1][0]
@@ -655,7 +847,7 @@ class TC:
             op=e.op
             if op=="?":
                 t=self.expr(e.operand,scope)
-                if t[0]=="res": return t[1]
+                if t[0] in ("res","opt"): return t[1]
                 return t
             if op in ("-","~"): return self.expr(e.operand,scope)
             if op=="not":
@@ -720,8 +912,10 @@ class TC:
             ct=self.expr(e.cond,scope)
             if ct not in (BOOL,UNKNOWN): self.err(f"if condition must be bool, got {ct}",e.cond)
             tt=self.expr(e.then,scope); et=self.expr(e.else_,scope)
-            if not compat(tt,et) and not compat(et,tt): self.err("if branches type mismatch",e)
-            return tt if compat(et,tt) else et
+            merged=merge_types(tt,et)
+            if merged==UNKNOWN and not compat(tt,et) and not compat(et,tt):
+                self.err("if branches type mismatch",e)
+            return merged
         if isinstance(e,MatchExpr):
             scr=self.expr(e.expr,scope); arms=[]
             for arm in (e.arms or []):
@@ -740,7 +934,7 @@ class TC:
                 arms.append(bt)
             ct=arms[0] if arms else NIL
             for t in arms[1:]:
-                if not compat(t,ct) and not compat(ct,t): ct=UNKNOWN
+                ct=merge_types(ct,t)
             return ct
         if isinstance(e,OrBlock): return self.suite(e.body,scope)
         return UNKNOWN
@@ -749,8 +943,8 @@ class TC:
         if op=="or":
             left_ty=self.expr(e.left,scope)
             if isinstance(e.right,OrBlock):
-                if left_ty[0]=="res": it_ty=ERRT
-                elif left_ty[0]=="opt": it_ty=NIL
+                if left_ty[0]=="res": it_ty=STR
+                elif left_ty[0]=="opt": it_ty=UNKNOWN
                 else: it_ty=left_ty
                 cs=scope.child("block")
                 sym=cs.lookup("it")
@@ -818,13 +1012,14 @@ class TC:
                 tas=[self._atype(t) for t in (op[1] or [])]; base_ty=self.inst(base_ty,tas)
             elif op[0]=="as": base_ty=self._atype(op[1])
             elif op[0]=="?":
-                if base_ty[0]=="res": base_ty=base_ty[1]
+                if base_ty[0] in ("res","opt"): base_ty=base_ty[1]
         return base_ty
     def typeslice(self,base):
         bt=base
         if bt[0]=="borrow": bt=bt[1]
         if bt[0]=="list": return base
-        if bt[0]=="p" and bt[1]=="str": return STR
+        if bt==STR: return STR
+        if bt==BYTES: return BYTES
         return base
     def inst(self,base,tas):
         if base[0]=="named": return N(base[1],tas)
@@ -885,6 +1080,14 @@ class TC:
                 pt=apply(params[i],subst)
                 if not compat(at,pt): self.err(f"argument type mismatch: {at} vs {pt}",node)
         if ret is not None: ret=apply(ret,subst)
+        for tp in tparams:
+            bound=self.generic_bounds.get((builtin,tp))
+            if bound is None: continue
+            actual=subst.get(tp)
+            if actual is None: continue
+            bname=_bound_name(bound)
+            if not self.trait_satisfied(actual,bname):
+                self.err(f"type {_tyname(actual)} does not satisfy {bname}",node)
         ret=self.special(builtin,base,arg_types,subst,ret)
         if ret is None: ret=UNKNOWN
         if tparams:

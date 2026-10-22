@@ -1,4 +1,4 @@
-from tools.typecheck import FLOAT, INT, BOOL, UNKNOWN, STR, BYTES
+from tools.typecheck import FLOAT, INT, BOOL, UNKNOWN, STR, BYTES, NIL
 from tools.wasm_encoder import *
 from tools.wasm_encoder import _uleb128_static
 from tools.nodes import *
@@ -643,6 +643,8 @@ class ExprMixin:
             if isinstance(ty, tuple):
                 if ty[0] == "p":
                     return ty[1] in ("str", "bytes")
+                if ty[0] in ("opt", "res", "borrow"):
+                    return self._type_is_ptr(ty[1])
                 if ty[0] in ("named", "list", "map", "set", "tuple", "func"):
                     return True
             return False
@@ -652,6 +654,8 @@ class ExprMixin:
             if isinstance(ty, tuple):
                 if ty[0] == "p":
                     return ty[1] in ("str", "bytes")
+                if ty[0] in ("opt", "res", "borrow"):
+                    return self._type_is_ptr(ty[1])
                 if ty[0] in ("named", "list", "map", "set", "tuple", "func"):
                     return True
             return False
@@ -898,6 +902,8 @@ class ExprMixin:
 
         def _gen_to_str(self, e, code, qname, prec=None):
             ty = self._tc_type(e, qname)
+            while isinstance(ty, tuple) and ty[0] in ("opt", "res", "borrow"):
+                ty = ty[1]
             helpers = self._ensure_str_helpers()
             if isinstance(e, NilLit) or ty == ("p", "nil"):
                 code += i32_const(self._str_ptr("nil"))
@@ -1105,6 +1111,69 @@ class ExprMixin:
             code += GLOBAL_GET(self.set_found_global)
             code += bytes([0x45])  # i32.eqz
             code += bytes([0x04, 0x40])
+            # grow when len == cap: newcap = cap*2 + 4
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(4)
+            code += bytes([0x46])  # i32.eq
+            code += bytes([0x04, 0x40])
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(4)
+            code += i32_const(2)
+            code += bytes([0x6C])
+            code += i32_const(4)
+            code += bytes([0x6A])
+            code += bytes([0xAD])
+            code += GLOBAL_SET(self.err_code_global)   # newcap
+            # new data pointer
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_SET(self.slice_base_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_GET(self.err_code_global)
+            code += bytes([0xA7])
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.heap_global)
+            # copy old entries
+            code += i32_const(0)
+            code += GLOBAL_SET(self.list_idx_global)
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x4E])
+            code += bytes([0x0D, 0x01])
+            code += GLOBAL_GET(self.slice_base_global)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.list_idx_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            # header = new data/cap
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.slice_base_global)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(8)
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.err_code_global)
+            code += bytes([0xA7])
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(4)
+            code += END
             code += GLOBAL_GET(self.list_tmp_global)
             code += GLOBAL_GET(self.tmp_global)
             code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
@@ -1124,6 +1193,730 @@ class ExprMixin:
             code += bytes([0x6A])
             code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
             code += END
+
+        def _gen_set_remove(self, code, is_float):
+            """Remove list_val from the set at tmp_global (no-op when absent)."""
+            code += i32_const(0)
+            code += GLOBAL_SET(self.set_found_global)
+            code += i32_const(0)
+            code += GLOBAL_SET(self.list_idx_global)
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x4E])
+            code += bytes([0x0D, 0x01])
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            if is_float:
+                code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.list_val_f64)
+                code += F64_EQ
+            else:
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.list_val_i64)
+                code += I64_EQ
+            code += bytes([0x04, 0x40])
+            code += i32_const(1)
+            code += GLOBAL_SET(self.set_found_global)
+            code += bytes([0x0C, 0x02])
+            code += END
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.list_idx_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            code += GLOBAL_GET(self.set_found_global)
+            code += bytes([0x04, 0x40])
+            # shift entries down from list_idx
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x4E])  # i+1 >= len
+            code += bytes([0x0D, 0x01])
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.list_idx_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += i32_const(1)
+            code += bytes([0x6B])
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += END
+
+        def _gen_map_del(self, code):
+            """Remove list_val key from the map at tmp_global/data in list_tmp_global."""
+            code += i32_const(0)
+            code += GLOBAL_SET(self.set_found_global)
+            code += i32_const(0)
+            code += GLOBAL_SET(self.list_idx_global)
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x4E])
+            code += bytes([0x0D, 0x01])
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(16)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.list_val_i64)
+            code += I64_EQ
+            code += bytes([0x04, 0x40])
+            code += i32_const(1)
+            code += GLOBAL_SET(self.set_found_global)
+            code += bytes([0x0C, 0x02])
+            code += END
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.list_idx_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            code += GLOBAL_GET(self.set_found_global)
+            code += bytes([0x04, 0x40])
+            # j = idx
+            code += GLOBAL_GET(self.list_idx_global)
+            code += bytes([0xAD])
+            code += GLOBAL_SET(self.err_code_global)
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.err_code_global)
+            code += bytes([0xA7])
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x4E])
+            code += bytes([0x0D, 0x01])
+            # copy key+value (16 bytes) from j+1 to j
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.err_code_global)
+            code += bytes([0xA7])
+            code += i32_const(16)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.err_code_global)
+            code += bytes([0xA7])
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += i32_const(16)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.err_code_global)
+            code += bytes([0xA7])
+            code += i32_const(16)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.err_code_global)
+            code += bytes([0xA7])
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += i32_const(16)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(8)
+            code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(8)
+            code += GLOBAL_GET(self.err_code_global)
+            code += i64_const(1)
+            code += bytes([0x7C])
+            code += GLOBAL_SET(self.err_code_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += i32_const(1)
+            code += bytes([0x6B])
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += END
+
+        def _gen_map_collect(self, recv, map_ty, kind, code, qname):
+            """Build a list with keys/values/items of a map."""
+            self._gen_expr(recv, code, qname)
+            code += GLOBAL_SET(self.tmp_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += GLOBAL_SET(self.set_found_global)      # len
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+            code += GLOBAL_SET(self.list_tmp_global)       # map data
+            # result header
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_SET(self.slice_base_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += i32_const(16)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.heap_global)
+            # result data
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_SET(self.tuple_save_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_GET(self.set_found_global)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.heap_global)
+            # header fields
+            code += GLOBAL_GET(self.slice_base_global)
+            code += GLOBAL_GET(self.set_found_global)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.slice_base_global)
+            code += GLOBAL_GET(self.set_found_global)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(4)
+            code += GLOBAL_GET(self.slice_base_global)
+            code += GLOBAL_GET(self.tuple_save_global)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(8)
+            # loop
+            code += i32_const(0)
+            code += GLOBAL_SET(self.list_idx_global)
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += GLOBAL_GET(self.set_found_global)
+            code += bytes([0x4E])
+            code += bytes([0x0D, 0x01])
+            # entry addr in err_code (i64) temporarily -> use list_val? keep key in list_val_i64
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(16)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += GLOBAL_SET(self.list_val_i64)
+            if kind == "keys":
+                code += GLOBAL_GET(self.tuple_save_global)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += GLOBAL_GET(self.list_val_i64)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+            elif kind == "values":
+                code += GLOBAL_GET(self.tuple_save_global)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += GLOBAL_GET(self.list_tmp_global)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(16)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(8)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+            else:  # items
+                # tuple = heap (16 bytes)
+                code += GLOBAL_GET(self.heap_global)
+                code += bytes([0xAD])
+                code += GLOBAL_SET(self.err_code_global)
+                code += GLOBAL_GET(self.heap_global)
+                code += i32_const(16)
+                code += bytes([0x6A])
+                code += GLOBAL_SET(self.heap_global)
+                # tuple[0] = key
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += GLOBAL_GET(self.list_val_i64)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+                # tuple[1] = value
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += GLOBAL_GET(self.list_tmp_global)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(16)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(8)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(8)
+                # list[i] = tuple ptr
+                code += GLOBAL_GET(self.tuple_save_global)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.list_idx_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            code += GLOBAL_GET(self.slice_base_global)
+
+        def _ctor_begin(self, size, code):
+            """Allocate a struct/variant; save the outer ctor base on the stack."""
+            code += GLOBAL_GET(self.ctor_base_global)  # saved outer base
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_SET(self.ctor_base_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += i32_const(size)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.heap_global)
+
+        def _ctor_end(self, code):
+            """Return the new pointer and restore the outer ctor base."""
+            code += GLOBAL_GET(self.ctor_base_global)
+            code += GLOBAL_SET(self.tmp_global)
+            code += GLOBAL_SET(self.ctor_base_global)
+            code += GLOBAL_GET(self.tmp_global)
+
+        def _zero_value(self, ty, code):
+            wt = self._wasm_type(ty) if ty not in (None, NIL) else None
+            if wt == WasmEncoder.F64:
+                code += f64_const(0.0)
+            elif wt == WasmEncoder.I32:
+                code += i32_const(0)
+            elif wt == WasmEncoder.I64:
+                code += i64_const(0)
+
+        def _store_tmp_value(self, ty, code):
+            if isinstance(ty, tuple) and ty[0] in ("opt", "res", "borrow"):
+                ty = ty[1]
+            if ty == FLOAT:
+                code += GLOBAL_SET(self.list_val_f64)
+            else:
+                if self._type_is_ptr(ty):
+                    code += bytes([0xAC])  # i64.extend_i32_u
+                code += GLOBAL_SET(self.list_val_i64)
+
+        def _load_tmp_value(self, ty, code):
+            if isinstance(ty, tuple) and ty[0] in ("opt", "res", "borrow"):
+                ty = ty[1]
+            if ty == FLOAT:
+                code += GLOBAL_GET(self.list_val_f64)
+            else:
+                code += GLOBAL_GET(self.list_val_i64)
+                if self._type_is_ptr(ty):
+                    code += bytes([0xA7])  # i32.wrap_i64
+
+        def _is_zero_value(self, ty, code):
+            if isinstance(ty, tuple) and ty[0] in ("opt", "res", "borrow"):
+                ty = ty[1]
+            if ty == FLOAT:
+                code += f64_const(0.0)
+                code += F64_EQ
+            else:
+                code += i64_const(0)
+                code += I64_EQ
+
+        def _gen_try(self, operand, code, qname):
+            """`expr?`: propagate errors (T!) / nil (T?) by returning early."""
+            ty = self._tc_type(operand, qname)
+            if not (isinstance(ty, tuple) and ty[0] in ("res", "opt")):
+                self._gen_expr(operand, code, qname)
+                return
+            inner = ty[1]
+            self._gen_expr(operand, code, qname)
+            self._store_tmp_value(ty, code)
+            rty = getattr(self, "func_ret", {}).get(qname)
+            if ty[0] == "res":
+                code += GLOBAL_GET(self.err_flag_global)
+                code += bytes([0x04, 0x40])  # if void
+                self._zero_value(rty, code)
+                code += RETURN
+                code += bytes([0x0B])
+            else:
+                self._load_tmp_value(ty, code)
+                if inner == FLOAT:
+                    code += f64_const(0.0)
+                    code += F64_EQ
+                else:
+                    code += i64_const(0)
+                    code += I64_EQ
+                code += bytes([0x04, 0x40])
+                self._zero_value(rty, code)
+                code += RETURN
+                code += bytes([0x0B])
+            self._load_tmp_value(ty, code)
+
+        def _gen_or_block(self, left, block, code, qname):
+            lty = self._tc_type(left, qname)
+            is_res = isinstance(lty, tuple) and lty[0] == "res"
+            is_opt = isinstance(lty, tuple) and lty[0] == "opt"
+            inner = lty[1] if (is_res or is_opt) else lty
+            self._gen_expr(left, code, qname)
+            self._store_tmp_value(lty if (is_res or is_opt) else inner, code)
+            if is_res:
+                code += GLOBAL_GET(self.err_flag_global)
+            elif inner == FLOAT:
+                code += GLOBAL_GET(self.list_val_f64)
+                code += f64_const(0.0)
+                code += F64_EQ
+            else:
+                code += GLOBAL_GET(self.list_val_i64)
+                code += i64_const(0)
+                code += I64_EQ
+            wt = self._wasm_type(inner) if inner not in (None, NIL) else WasmEncoder.I64
+            code += IF(wt)
+            self._open_block("if")
+            if is_res:
+                code += i32_const(0)
+                code += GLOBAL_SET(self.err_flag_global)
+                if "it" in self.locals_map.get(qname, {}):
+                    code += GLOBAL_GET(self.err_msg_global)
+                    code += local_set(self.locals_map[qname]["it"])
+            self._gen_suite(block.body, code, qname, None, True)
+            # A block ending in return/break/continue diverges; still leave a
+            # value on the stack so wasm's static typing accepts the branch.
+            last = block.body.stmts[-1] if getattr(block.body, "stmts", None) else None
+            if last is None or isinstance(last, (ReturnStmt, BreakStmt, ContinueStmt)):
+                self._zero_value(inner, code)
+            code += ELSE
+            self._load_tmp_value(lty if (is_res or is_opt) else inner, code)
+            code += END
+            self._close_block()
+
+        def _elem_wasm(self, elem_ty):
+            if elem_ty == FLOAT:
+                return WasmEncoder.F64
+            if self._type_is_ptr(elem_ty):
+                return WasmEncoder.I32
+            return WasmEncoder.I64
+
+        def _emit_load_slot(self, code, elem_ty, off=0):
+            """Load an 8-byte collection slot; address must be on the stack."""
+            if elem_ty == FLOAT:
+                code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(off)
+            else:
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(off)
+                if self._type_is_ptr(elem_ty):
+                    code += bytes([0xA7])  # i32.wrap_i64
+
+        def _store_elem(self, code, elem_ty, value_in_global):
+            """Store one 8-byte slot. Address is on the stack."""
+            if elem_ty == FLOAT:
+                code += GLOBAL_GET(self.list_val_f64)
+                code += bytes([0x39]); code += _uleb128_static(3); code += _uleb128_static(0)
+            else:
+                code += GLOBAL_GET(self.list_val_i64)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+
+        def _gen_list_optional_at(self, recv, elem_ty, code, qname, idx_expr=None, last=False):
+            self._gen_expr(recv, code, qname)
+            code += GLOBAL_SET(self.tmp_global)
+            if last:
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += i32_const(1)
+                code += bytes([0x6B])
+                code += GLOBAL_SET(self.list_idx_global)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += i32_const(0)
+                code += bytes([0x4A])  # i32.gt_s (len > 0)
+            else:
+                if idx_expr is None:
+                    code += i32_const(0)
+                else:
+                    self._gen_expr(idx_expr, code, qname)
+                    code += bytes([0xA7])
+                code += GLOBAL_SET(self.list_idx_global)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(0)
+                code += bytes([0x4E])  # i32.ge_s (idx >= 0)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += bytes([0x49])  # i32.lt_u
+                code += bytes([0x71])  # and
+            code += GLOBAL_SET(self.set_found_global)
+            code += GLOBAL_GET(self.set_found_global)
+            code += IF(self._elem_wasm(elem_ty))
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            self._emit_load_slot(code, elem_ty)
+            code += ELSE
+            self._zero_value(elem_ty, code)
+            code += END
+
+        def _gen_list_pop(self, recv, elem_ty, code, qname):
+            self._gen_expr(recv, code, qname)
+            code += GLOBAL_SET(self.tmp_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += i32_const(0)
+            code += bytes([0x4A])  # len > 0
+            code += IF(self._elem_wasm(elem_ty))
+            # load last element into the temp value
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += i32_const(1)
+            code += bytes([0x6B])
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            if elem_ty == FLOAT:
+                code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_SET(self.list_val_f64)
+            else:
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_SET(self.list_val_i64)
+            # len--
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += i32_const(1)
+            code += bytes([0x6B])
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+            self._load_tmp_value(elem_ty, code)
+            code += ELSE
+            self._zero_value(elem_ty, code)
+            code += END
+
+        def _gen_list_method(self, recv, method, args, elem_ty, code, qname):
+            """Codegen for list methods returning O(T)/T. Returns True when handled."""
+            arg = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
+            wt = self._elem_wasm(elem_ty)
+            if method in ("get",):
+                self._gen_list_optional_at(recv, elem_ty, code, qname, idx_expr=arg)
+                return True
+            if method == "pop":
+                self._gen_list_pop(recv, elem_ty, code, qname)
+                return True
+            if method in ("first", "last"):
+                self._gen_list_optional_at(recv, elem_ty, code, qname, last=(method == "last"))
+                return True
+            if method == "count":
+                self._gen_expr(recv, code, qname)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += bytes([0xAC])
+                return True
+            if method == "contains":
+                self._gen_contains(arg, recv, code, qname)
+                code += bytes([0xAD])
+                return True
+            if method == "slice":
+                second = args[1].value if (len(args) > 1 and isinstance(args[1], Arg)) else (args[1] if len(args) > 1 else None)
+                self._gen_expr(Postfix(recv, [("slice", arg, second)]), code, qname)
+                return True
+            if method == "reverse":
+                self._gen_expr(recv, code, qname)
+                code += GLOBAL_SET(self.tmp_global)
+                code += i32_const(0)
+                code += GLOBAL_SET(self.list_idx_global)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += i32_const(1)
+                code += bytes([0x6B])
+                code += bytes([0xAD])  # extend to i64 for err_code slot
+                code += GLOBAL_SET(self.err_code_global)
+                code += BLOCK(BLK_VOID)
+                code += LOOP(BLK_VOID)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += bytes([0x4E])  # i >= j
+                code += bytes([0x0D, 0x01])
+                # tmp = data[i]
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_SET(self.list_val_i64)
+                # data[i] = data[j]
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+                # data[j] = tmp
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                code += GLOBAL_GET(self.list_val_i64)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(1)
+                code += bytes([0x6A])
+                code += GLOBAL_SET(self.list_idx_global)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += i32_const(1)
+                code += bytes([0x6B])
+                code += bytes([0xAD])
+                code += GLOBAL_SET(self.err_code_global)
+                code += bytes([0x0C, 0x00])
+                code += END
+                code += END
+                code += GLOBAL_GET(self.tmp_global)
+                return True
+            if method == "sort":
+                self._gen_expr(recv, code, qname)
+                code += GLOBAL_SET(self.tmp_global)
+                # bubble sort: i from 0..len-1, j from 0..len-2-i
+                code += i32_const(0)
+                code += GLOBAL_SET(self.list_idx_global)   # i
+                code += BLOCK(BLK_VOID)
+                code += LOOP(BLK_VOID)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += bytes([0x4E])  # i >= len
+                code += bytes([0x0D, 0x01])
+                code += i64_const(0)
+                code += GLOBAL_SET(self.err_code_global)   # j
+                code += BLOCK(BLK_VOID)
+                code += LOOP(BLK_VOID)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += bytes([0x6B])
+                code += i32_const(1)
+                code += bytes([0x6B])
+                code += bytes([0x4E])  # j >= len-1-i
+                code += bytes([0x0D, 0x01])
+                # tmp = data[j]
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                if wt == WasmEncoder.F64:
+                    code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(0)
+                    code += GLOBAL_SET(self.sort_val_f64)
+                else:
+                    code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                    code += GLOBAL_SET(self.sort_val_i64)
+                # next = data[j+1]
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += i32_const(1)
+                code += bytes([0x6A])
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                if wt == WasmEncoder.F64:
+                    code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(0)
+                    code += GLOBAL_SET(self.list_val_f64)
+                else:
+                    code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                    code += GLOBAL_SET(self.list_val_i64)
+                # if tmp > next: store next at j, tmp at j+1
+                if wt == WasmEncoder.F64:
+                    code += GLOBAL_GET(self.sort_val_f64)
+                    code += GLOBAL_GET(self.list_val_f64)
+                    code += bytes([0x64])  # f64.gt
+                else:
+                    code += GLOBAL_GET(self.sort_val_i64)
+                    code += GLOBAL_GET(self.list_val_i64)
+                    code += bytes([0x55])  # i64.gt_s
+                code += IF(BLK_VOID)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                if wt == WasmEncoder.F64:
+                    code += GLOBAL_GET(self.list_val_f64)
+                    code += bytes([0x39]); code += _uleb128_static(3); code += _uleb128_static(0)
+                else:
+                    code += GLOBAL_GET(self.list_val_i64)
+                    code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.err_code_global)
+                code += bytes([0xA7])
+                code += i32_const(1)
+                code += bytes([0x6A])
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                if wt == WasmEncoder.F64:
+                    code += GLOBAL_GET(self.sort_val_f64)
+                    code += bytes([0x39]); code += _uleb128_static(3); code += _uleb128_static(0)
+                else:
+                    code += GLOBAL_GET(self.sort_val_i64)
+                    code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += END
+                code += GLOBAL_GET(self.err_code_global)
+                code += i64_const(1)
+                code += bytes([0x7C])  # i64.add
+                code += GLOBAL_SET(self.err_code_global)
+                code += bytes([0x0C, 0x00])
+                code += END
+                code += END
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(1)
+                code += bytes([0x6A])
+                code += GLOBAL_SET(self.list_idx_global)
+                code += bytes([0x0C, 0x00])
+                code += END
+                code += END
+                return True
+            return False
 
         def _gen_expr(self, e, code, qname):
             # module-qualified access: `mod.fn(...)`, `mod.CONST`,
@@ -1150,6 +1943,44 @@ class ExprMixin:
                         for op in rest:
                             rebuilt = Postfix(rebuilt, [op])
                         return self._gen_expr(rebuilt, code, qname)
+            if isinstance(e, Postfix) and e.ops and e.ops[-1][0] == "as":
+                base = e.base
+                if len(e.ops) > 1:
+                    base = Postfix(base, e.ops[:-1])
+                src = self._tc_type(base, qname)
+                tgt = self.tc._atype(e.ops[-1][1])
+                if tgt == STR:
+                    self._gen_to_str(base, code, qname)
+                    return
+                self._gen_expr(base, code, qname)
+                if tgt == FLOAT and src != FLOAT:
+                    code += bytes([0xB9])       # f64.convert_i64_s
+                elif tgt == INT and src == FLOAT:
+                    code += bytes([0xB0])       # i64.trunc_f64_s
+                elif tgt == BOOL:
+                    if src == FLOAT:
+                        code += f64_const(0.0)
+                        code += F64_NE
+                    else:
+                        code += i64_const(0)
+                        code += I64_NE
+                    code += bytes([0xAD])
+                return
+            if isinstance(e, Postfix):
+                # `str.parse[T]()`: field parse + typeargs + call
+                if (isinstance(e.base, Postfix) and e.ops and e.ops[-1][0] == "call"
+                        and e.base.ops and e.base.ops[-1][0] == "typeargs"
+                        and isinstance(e.base.base, Postfix) and e.base.base.ops
+                        and e.base.base.ops[-1][0] == "field"
+                        and e.base.base.ops[-1][1] == "parse"):
+                    target = self.tc._atype(e.base.ops[-1][1][0])
+                    recv = e.base.base.base
+                    self._gen_expr(recv, code, qname)
+                    if target == FLOAT:
+                        code += CALL(self._ensure_parse_helpers()["f64"])
+                    else:
+                        code += CALL(self._ensure_parse_helpers()["i64"])
+                    return
             if isinstance(e, IntLit):
                 code += i64_const(int(e.value))
             elif isinstance(e, FloatLit):
@@ -1529,45 +2360,40 @@ class ExprMixin:
                 is_ptr = not (elem_ty == INT or elem_ty == FLOAT or elem_ty == BOOL)
                 n = len(items)
                 cap = n if n > 4 else 4
-                # header ptr = current heap
+                # header ptr = current heap (kept in slice_base_global: element
+                # expressions may use tmp_global, e.g. tuples/structs)
                 code += GLOBAL_GET(self.heap_global)
-                code += GLOBAL_SET(self.tmp_global)
-                # reserve header (16 bytes)
+                code += GLOBAL_SET(self.slice_base_global)
+                # reserve header (16 bytes) + data (cap * 8)
                 code += GLOBAL_GET(self.heap_global)
-                code += i32_const(16)
-                code += bytes([0x6A])
-                code += GLOBAL_SET(self.heap_global)
-                # data ptr = current heap
-                code += GLOBAL_GET(self.heap_global)
-                code += GLOBAL_SET(self.list_tmp_global)
-                # reserve data (cap * 8)
-                code += GLOBAL_GET(self.heap_global)
-                code += i32_const(cap * 8)
+                code += i32_const(16 + cap * 8)
                 code += bytes([0x6A])
                 code += GLOBAL_SET(self.heap_global)
                 # store len
-                code += GLOBAL_GET(self.tmp_global)
+                code += GLOBAL_GET(self.slice_base_global)
                 code += i32_const(n)
                 code += bytes([0x36])  # i32.store
                 code += _uleb128_static(2)  # align 4
                 code += _uleb128_static(0)
                 # store cap
-                code += GLOBAL_GET(self.tmp_global)
+                code += GLOBAL_GET(self.slice_base_global)
                 code += i32_const(cap)
                 code += bytes([0x36])
                 code += _uleb128_static(2)
                 code += _uleb128_static(4)
-                # store data ptr
-                code += GLOBAL_GET(self.tmp_global)
-                code += GLOBAL_GET(self.list_tmp_global)
+                # store data ptr = header + 16
+                code += GLOBAL_GET(self.slice_base_global)
+                code += GLOBAL_GET(self.slice_base_global)
+                code += i32_const(16)
+                code += bytes([0x6A])
                 code += bytes([0x36])
                 code += _uleb128_static(2)
                 code += _uleb128_static(8)
                 # store items
                 for i, a in enumerate(items):
                     val = a.value if isinstance(a, Arg) else a
-                    code += GLOBAL_GET(self.list_tmp_global)
-                    code += i32_const(i * 8)
+                    code += GLOBAL_GET(self.slice_base_global)
+                    code += i32_const(16 + i * 8)
                     code += bytes([0x6A])
                     self._gen_expr(val, code, qname)
                     if is_float:
@@ -1586,7 +2412,7 @@ class ExprMixin:
                         code += _uleb128_static(3)
                         code += _uleb128_static(0)
                 # result = header ptr
-                code += GLOBAL_GET(self.tmp_global)
+                code += GLOBAL_GET(self.slice_base_global)
             elif isinstance(e, NameExpr):
                 if e.name == "pi":
                     code += f64_const(3.141592653589793)
@@ -1618,7 +2444,7 @@ class ExprMixin:
                             code += bytes([0x28])
                         else:
                             code += bytes([0x29])
-                        code += _uleb128_static(3)
+                        code += _uleb128_static(2 if wtype == WasmEncoder.I32 else 3)
                         code += _uleb128_static(off)
                     else:
                         _unsupported(f"la variable/nombre '{e.name}' (no es local ni campo conocido)", e)
@@ -1626,22 +2452,52 @@ class ExprMixin:
                 op = e.op
                 if op == "or":
                     left_ty = self._tc_type(e.left, qname)
-                    if isinstance(left_ty, tuple) and left_ty[0] == "res":
+                    if isinstance(e.right, OrBlock):
+                        self._gen_or_block(e.left, e.right, code, qname)
+                        return
+                    if isinstance(e.right, NameExpr) and e.right.name in ("__continue__", "__break__"):
+                        kind = "loop" if e.right.name == "__continue__" else "exit"
                         self._gen_expr(e.left, code, qname)
+                        self._store_tmp_value(left_ty, code)
+                        if isinstance(left_ty, tuple) and left_ty[0] == "res":
+                            code += GLOBAL_GET(self.err_flag_global)
+                        else:
+                            code += GLOBAL_GET(self.list_val_i64)
+                            code += i64_const(0)
+                            code += I64_EQ
+                        code += bytes([0x04, 0x40])
+                        code += self._branch_to(kind)
+                        code += bytes([0x0B])
+                        self._load_tmp_value(left_ty, code)
+                        return
+                    if isinstance(left_ty, tuple) and left_ty[0] == "res":
+                        inner = left_ty[1]
+                        self._gen_expr(e.left, code, qname)
+                        self._store_tmp_value(left_ty, code)
                         code += GLOBAL_GET(self.err_flag_global)
-                        code += bytes([0x04, 0x40])  # if err
+                        code += IF(self._wasm_type(inner))
                         code += i32_const(0)
                         code += GLOBAL_SET(self.err_flag_global)
                         self._gen_expr(e.right, code, qname)
                         code += bytes([0x05])  # else
+                        self._load_tmp_value(inner, code)
                         code += bytes([0x0B])
                     elif isinstance(left_ty, tuple) and left_ty[0] == "opt":
+                        inner = left_ty[1]
                         self._gen_expr(e.left, code, qname)
-                        code += I64_EQZ
-                        code += bytes([0x04, 0x40])  # if nil
-                        code += DROP
+                        self._store_tmp_value(left_ty, code)
+                        if inner == FLOAT:
+                            code += GLOBAL_GET(self.list_val_f64)
+                            code += f64_const(0.0)
+                            code += F64_EQ
+                        else:
+                            code += GLOBAL_GET(self.list_val_i64)
+                            code += i64_const(0)
+                            code += I64_EQ
+                        code += IF(self._wasm_type(inner))  # if nil
                         self._gen_expr(e.right, code, qname)
                         code += bytes([0x05])  # else
+                        self._load_tmp_value(inner, code)
                         code += bytes([0x0B])
                     else:
                         self._gen_expr(e.left, code, qname)
@@ -1766,15 +2622,7 @@ class ExprMixin:
                         self._gen_expr(e.operand, code, qname)
                         code += I64_SUB
                 elif e.op == "?":
-                    self._gen_expr(e.operand, code, qname)
-                    # if error flag set, return 0 (propagate)
-                    code += GLOBAL_GET(self.err_flag_global)
-                    code += bytes([0x45])  # i32.eqz
-                    code += bytes([0x04, 0x40])  # if void
-                    # error: push default 0 and return
-                    code += i64_const(0)
-                    code += RETURN
-                    code += bytes([0x0B])  # end if
+                    self._gen_try(e.operand, code, qname)
                 elif e.op == "~":
                     self._gen_expr(e.operand, code, qname)
                     code += i64_const(-1)
@@ -1893,6 +2741,75 @@ class ExprMixin:
                             code += bytes([0x3A, 0x00, 0x00])
                             code += GLOBAL_GET(self.tmp_global)
                             return
+                # string slice: s[a:b], s[:b], s[a:]
+                if (not (e.ops and e.ops[-1][0] == "call")) and e.ops and e.ops[0][0] == "slice":
+                    base_ty = self._tc_type(e.base, qname)
+                    if isinstance(base_ty, tuple) and base_ty[0] == "borrow":
+                        base_ty = base_ty[1]
+                    if base_ty in (STR, BYTES):
+                        sl = e.ops[0]
+                        self._gen_expr(e.base, code, qname)
+                        code += GLOBAL_SET(self.slice_base_global)
+                        if sl[1] is None:
+                            code += i64_const(0)
+                        else:
+                            self._gen_expr(sl[1], code, qname)
+                        code += GLOBAL_SET(self.list_val_i64)   # start (i64)
+                        if len(sl) <= 2 or sl[2] is None:
+                            code += GLOBAL_GET(self.slice_base_global)
+                            code += CALL(self._ensure_str_helpers()["len"])
+                        else:
+                            self._gen_expr(sl[2], code, qname)
+                            code += bytes([0xA7])
+                        # n = end - start
+                        code += GLOBAL_GET(self.list_val_i64)
+                        code += bytes([0xA7])
+                        code += bytes([0x6B])
+                        code += GLOBAL_SET(self.list_tmp_global)
+                        # dest = heap; heap += n + 1
+                        code += GLOBAL_GET(self.heap_global)
+                        code += GLOBAL_SET(self.tmp_global)
+                        code += GLOBAL_GET(self.heap_global)
+                        code += GLOBAL_GET(self.list_tmp_global)
+                        code += i32_const(1)
+                        code += bytes([0x6A])
+                        code += bytes([0x6A])
+                        code += GLOBAL_SET(self.heap_global)
+                        # copy loop
+                        code += i32_const(0)
+                        code += GLOBAL_SET(self.list_idx_global)
+                        code += BLOCK(BLK_VOID)
+                        code += LOOP(BLK_VOID)
+                        code += GLOBAL_GET(self.list_idx_global)
+                        code += GLOBAL_GET(self.list_tmp_global)
+                        code += bytes([0x4E])  # i32.ge_s
+                        code += bytes([0x0D, 0x01])
+                        code += GLOBAL_GET(self.tmp_global)
+                        code += GLOBAL_GET(self.list_idx_global)
+                        code += bytes([0x6A])
+                        code += GLOBAL_GET(self.slice_base_global)
+                        code += GLOBAL_GET(self.list_val_i64)
+                        code += bytes([0xA7])
+                        code += GLOBAL_GET(self.list_idx_global)
+                        code += bytes([0x6A])
+                        code += bytes([0x6A])
+                        code += bytes([0x2D, 0x00, 0x00])
+                        code += bytes([0x3A, 0x00, 0x00])
+                        code += GLOBAL_GET(self.list_idx_global)
+                        code += i32_const(1)
+                        code += bytes([0x6A])
+                        code += GLOBAL_SET(self.list_idx_global)
+                        code += bytes([0x0C, 0x00])
+                        code += END
+                        code += END
+                        # NUL terminator
+                        code += GLOBAL_GET(self.tmp_global)
+                        code += GLOBAL_GET(self.list_tmp_global)
+                        code += bytes([0x6A])
+                        code += i32_const(0)
+                        code += bytes([0x3A, 0x00, 0x00])
+                        code += GLOBAL_GET(self.tmp_global)
+                        return
                 # list slice
                 if (not (e.ops and e.ops[-1][0] == "call")) and e.ops and e.ops[0][0] == "slice":
                     base_ty = self._tc_type(e.base, qname)
@@ -2010,6 +2927,44 @@ class ExprMixin:
                         # result
                         code += GLOBAL_GET(self.tmp_global)
                         return
+                # string / bytes index: s[i] -> one-char str, b[i] -> int byte
+                if (not (e.ops and e.ops[-1][0] == "call")) and e.ops and e.ops[0][0] == "index":
+                    base_ty = self._tc_type(e.base, qname)
+                    if isinstance(base_ty, tuple) and base_ty[0] == "borrow":
+                        base_ty = base_ty[1]
+                    if base_ty in (STR, BYTES):
+                        self._gen_expr(e.base, code, qname)
+                        code += GLOBAL_SET(self.slice_base_global)
+                        self._gen_expr(e.ops[0][1], code, qname)
+                        code += bytes([0xA7])  # i32.wrap_i64
+                        code += GLOBAL_GET(self.slice_base_global)
+                        code += bytes([0x6A])
+                        if base_ty == BYTES:
+                            # raw byte as int
+                            code += bytes([0x2D, 0x00, 0x00])  # i32.load8_u
+                            code += bytes([0xAD])             # i64.extend_i32_u
+                        else:
+                            # one-character string: allocate 2 bytes
+                            code += bytes([0x2D, 0x00, 0x00])
+                            code += bytes([0xAD])             # i64.extend_i32_u
+                            code += GLOBAL_SET(self.list_val_i64)
+                            code += GLOBAL_GET(self.heap_global)
+                            code += GLOBAL_SET(self.tmp_global)
+                            code += GLOBAL_GET(self.heap_global)
+                            code += i32_const(2)
+                            code += bytes([0x6A])
+                            code += GLOBAL_SET(self.heap_global)
+                            code += GLOBAL_GET(self.tmp_global)
+                            code += GLOBAL_GET(self.list_val_i64)
+                            code += bytes([0xA7])
+                            code += bytes([0x3A, 0x00, 0x00])  # i32.store8
+                            code += GLOBAL_GET(self.tmp_global)
+                            code += i32_const(1)
+                            code += bytes([0x6A])
+                            code += i32_const(0)
+                            code += bytes([0x3A, 0x00, 0x00])
+                            code += GLOBAL_GET(self.tmp_global)
+                        return
                 # map index
                 if (not (e.ops and e.ops[-1][0] == "call")) and e.ops and e.ops[0][0] == "index":
                     base_ty = self._tc_type(e.base, qname)
@@ -2032,6 +2987,8 @@ class ExprMixin:
                         code += GLOBAL_GET(self.tmp_global)
                         code += GLOBAL_GET(self.list_val_i64)
                         code += CALL(helper_idx)
+                        if is_float_val:
+                            code += bytes([0xBF])  # f64.reinterpret_i64
                         return
                 # list index
                 if (not (e.ops and e.ops[-1][0] == "call")) and e.ops and e.ops[0][0] == "index":
@@ -2245,7 +3202,15 @@ class ExprMixin:
                 if (not (e.ops and e.ops[-1][0] == "call")) and e.ops and e.ops[0][0] == "field":
                     fname = e.ops[0][1]
                     field_info = None
-                    for tn, fields in self.struct_layouts.items():
+                    base_ty = self._tc_type(e.base, qname)
+                    if isinstance(base_ty, tuple) and base_ty[0] == "borrow":
+                        base_ty = base_ty[1]
+                    candidates = []
+                    if isinstance(base_ty, tuple) and base_ty[0] == "named":
+                        candidates = [self.struct_layouts.get(base_ty[1], [])]
+                    if not candidates:
+                        candidates = list(self.struct_layouts.values())
+                    for fields in candidates:
                         for (f, wtype, off, fty, fdefault) in fields:
                             if f == fname:
                                 field_info = (wtype, off, fty)
@@ -2261,7 +3226,7 @@ class ExprMixin:
                             code += bytes([0x28])
                         else:
                             code += bytes([0x29])
-                        code += _uleb128_static(3)
+                        code += _uleb128_static(2 if wtype == WasmEncoder.I32 else 3)
                         code += _uleb128_static(off)
                         return
                 # constructor call for sum-type variants: Type.Variant(args)
@@ -2275,21 +3240,16 @@ class ExprMixin:
                     args = e.ops[-1][1] or []
                     size = self.struct_sizes[type_name]
                     tag = self.variant_index[type_name][variant_name]
-                    code += GLOBAL_GET(self.heap_global)
-                    code += GLOBAL_SET(self.tmp_global)
-                    code += GLOBAL_GET(self.heap_global)
-                    code += i32_const(size)
-                    code += bytes([0x6A])
-                    code += GLOBAL_SET(self.heap_global)
+                    self._ctor_begin(size, code)
                     # tag at offset 0
-                    code += GLOBAL_GET(self.tmp_global)
+                    code += GLOBAL_GET(self.ctor_base_global)
                     code += i32_const(tag)
                     code += bytes([0x36])
                     code += _uleb128_static(2)
                     code += _uleb128_static(0)
                     fields = self.variant_fields[type_name][variant_name]
                     for i, (fname, wtype, off, fty, fdefault) in enumerate(fields):
-                        code += GLOBAL_GET(self.tmp_global)
+                        code += GLOBAL_GET(self.ctor_base_global)
                         if i < len(args):
                             val_expr = args[i].value if isinstance(args[i], Arg) else args[i]
                             for a in args:
@@ -2309,9 +3269,9 @@ class ExprMixin:
                             code += bytes([0x36])
                         else:
                             code += bytes([0x37])
-                        code += _uleb128_static(3)
+                        code += _uleb128_static(2 if wtype == WasmEncoder.I32 else 3)
                         code += _uleb128_static(off)
-                    code += GLOBAL_GET(self.tmp_global)
+                    self._ctor_end(code)
                     return
                 # constructor call for struct types
                 if isinstance(e.base, NameExpr) and e.ops and e.ops[-1][0] == "call" and e.base.name in self.struct_layouts:
@@ -2319,16 +3279,11 @@ class ExprMixin:
                     args = e.ops[-1][1] or []
                     # alloc
                     size = self.struct_sizes[callee_name]
-                    code += GLOBAL_GET(self.heap_global)
-                    code += GLOBAL_SET(self.tmp_global)
-                    code += GLOBAL_GET(self.heap_global)
-                    code += i32_const(size)
-                    code += bytes([0x6A])  # i32.add
-                    code += GLOBAL_SET(self.heap_global)
+                    self._ctor_begin(size, code)
                     fields = self.struct_layouts[callee_name]
                     # positional arg index
                     for i, (fname, wtype, off, fty, fdefault) in enumerate(fields):
-                        code += GLOBAL_GET(self.tmp_global)
+                        code += GLOBAL_GET(self.ctor_base_global)
                         # value
                         if i < len(args):
                             val_expr = args[i].value if isinstance(args[i], Arg) else args[i]
@@ -2357,9 +3312,9 @@ class ExprMixin:
                             code += bytes([0x36])
                         else:
                             code += bytes([0x37])
-                        code += _uleb128_static(3)
+                        code += _uleb128_static(2 if wtype == WasmEncoder.I32 else 3)
                         code += _uleb128_static(off)
-                    code += GLOBAL_GET(self.tmp_global)
+                    self._ctor_end(code)
                     return
                 # str methods
                 if isinstance(e.base, Postfix) and e.base.ops and e.base.ops[-1][0] == "field" and e.ops and e.ops[-1][0] == "call":
@@ -2510,15 +3465,19 @@ class ExprMixin:
                         rty = rty[1]
                     args = e.ops[-1][1] or []
                     arg = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
-                    if isinstance(rty, tuple) and rty[0] == "list" and method in ("map", "filter", "len"):
+                    if isinstance(rty, tuple) and rty[0] == "list":
                         if method == "len":
                             self._gen_expr(recv, code, qname)
                             code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
                             code += bytes([0xAC])
                             return
-                        self._gen_list_map(code, qname, recv, arg, rty, method)
-                        return
-                    if isinstance(rty, tuple) and rty[0] == "set" and method in ("add", "push", "contains", "len"):
+                        if method in ("map", "filter"):
+                            self._gen_list_map(code, qname, recv, arg, rty, method)
+                            return
+                        elem_ty = rty[1] if len(rty) > 1 else UNKNOWN
+                        if self._gen_list_method(recv, method, args, elem_ty, code, qname):
+                            return
+                    if isinstance(rty, tuple) and rty[0] == "set" and method in ("add", "push", "insert", "contains", "remove", "del", "len"):
                         if method == "len":
                             self._gen_expr(recv, code, qname)
                             code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
@@ -2539,9 +3498,15 @@ class ExprMixin:
                             code += GLOBAL_SET(self.list_val_i64)
                         self._gen_expr(recv, code, qname)
                         code += GLOBAL_SET(self.tmp_global)
-                        self._emit_set_insert(code, is_float)
+                        code += GLOBAL_GET(self.tmp_global)
+                        code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                        code += GLOBAL_SET(self.list_tmp_global)
+                        if method in ("remove", "del"):
+                            self._gen_set_remove(code, is_float)
+                        else:
+                            self._emit_set_insert(code, is_float)
                         return
-                    if isinstance(rty, tuple) and rty[0] == "map" and method in ("len", "has", "get"):
+                    if isinstance(rty, tuple) and rty[0] == "map" and method in ("len", "has", "get", "del", "keys", "values", "items"):
                         if method == "len":
                             self._gen_expr(recv, code, qname)
                             code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
@@ -2550,6 +3515,21 @@ class ExprMixin:
                         if method == "has":
                             self._gen_contains(arg, recv, code, qname)
                             code += bytes([0xAD])
+                            return
+                        if method == "del":
+                            self._gen_expr(arg, code, qname)
+                            if self._operand_is_ptr(arg, qname):
+                                code += bytes([0xAC])
+                            code += GLOBAL_SET(self.list_val_i64)
+                            self._gen_expr(recv, code, qname)
+                            code += GLOBAL_SET(self.tmp_global)
+                            code += GLOBAL_GET(self.tmp_global)
+                            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                            code += GLOBAL_SET(self.list_tmp_global)
+                            self._gen_map_del(code)
+                            return
+                        if method in ("keys", "values", "items"):
+                            self._gen_map_collect(recv, rty, method, code, qname)
                             return
                         self._gen_expr(Postfix(recv, [("index", arg)]), code, qname)
                         return
@@ -2680,6 +3660,20 @@ class ExprMixin:
                             self._gen_expr(val, code, qname)
                         code += CALL(self.func_index[lname])
                         return
+                    if callee_name == "err":
+                        msg_expr = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
+                        code_expr = args[1].value if (len(args) > 1 and isinstance(args[1], Arg)) else (args[1] if len(args) > 1 else None)
+                        self._gen_expr(msg_expr, code, qname)
+                        code += GLOBAL_SET(self.err_msg_global)
+                        if code_expr is not None:
+                            self._gen_expr(code_expr, code, qname)
+                        else:
+                            code += i64_const(0)
+                        code += GLOBAL_SET(self.err_code_global)
+                        code += i32_const(1)
+                        code += GLOBAL_SET(self.err_flag_global)
+                        code += i64_const(0)
+                        return
                     for a in args:
                         val = a.value if isinstance(a, Arg) else a
                         self._gen_expr(val, code, qname)
@@ -2699,7 +3693,7 @@ class ExprMixin:
                     if callee_name == "print":
                         arg_expr = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
                         arg_ty = self._tc_type(arg_expr, qname) if arg_expr is not None else None
-                        if (isinstance(arg_expr, (StrLit, RStrLit, MlStrLit, BytesLit, FStrLit))
+                        if (isinstance(arg_expr, (StrLit, RStrLit, MlStrLit, BytesLit, FStrLit, ItExpr))
                                 or arg_ty == STR
                                 or (isinstance(arg_ty, tuple) and arg_ty[0] == "p" and arg_ty[1] == "bytes")):
                             code += CALL(self.print_str_import)

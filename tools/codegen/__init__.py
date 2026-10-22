@@ -51,7 +51,10 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
         self.list_tmp_global = self.enc.add_global(WasmEncoder.I32, True, i32_const(0))
         self.list_val_i64 = self.enc.add_global(WasmEncoder.I64, True, i64_const(0))
         self.list_val_f64 = self.enc.add_global(WasmEncoder.F64, True, f64_const(0.0))
+        self.sort_val_i64 = self.enc.add_global(WasmEncoder.I64, True, i64_const(0))
+        self.sort_val_f64 = self.enc.add_global(WasmEncoder.F64, True, f64_const(0.0))
         self.list_idx_global = self.enc.add_global(WasmEncoder.I32, True, i32_const(0))
+        self.ctor_base_global = self.enc.add_global(WasmEncoder.I32, True, i32_const(0))
         self.set_found_global = self.enc.add_global(WasmEncoder.I32, True, i32_const(0))
         self.match_scrut_i64 = self.enc.add_global(WasmEncoder.I64, True, i64_const(0))
         self.match_scrut_f64 = self.enc.add_global(WasmEncoder.F64, True, f64_const(0.0))
@@ -92,7 +95,12 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                 _collect_from_expr(e.else_)
             elif isinstance(e, BinOp):
                 _collect_from_expr(e.left)
-                _collect_from_expr(e.right)
+                if isinstance(e.right, OrBlock):
+                    names.add("it")
+                    for st in (e.right.body.stmts if hasattr(e.right.body, "stmts") else []):
+                        walk(st)
+                else:
+                    _collect_from_expr(e.right)
             elif isinstance(e, UnaryOp):
                 _collect_from_expr(e.operand)
             elif isinstance(e, Postfix):
@@ -183,6 +191,20 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                                 pass
                         elif isinstance(s.value, FloatLit):
                             fvars.add(b.name)
+                        else:
+                            try:
+                                ty = self._tc_type(s.value, qname)
+                                while isinstance(ty, tuple) and ty[0] in ("opt", "res", "borrow"):
+                                    ty = ty[1]
+                                if ty == FLOAT:
+                                    fvars.add(b.name)
+                            except Exception:
+                                pass
+                vty = self._tc_type(s.value, qname)
+                if isinstance(vty, tuple) and vty[0] == "tuple" and len(s.bindings) > 1:
+                    for b, et in zip(s.bindings, vty[1]):
+                        if getattr(b, "kind", None) == "name" and et == FLOAT:
+                            fvars.add(b.name)
                 if isinstance(s.value, MatchExpr):
                     for name, ty in self._match_bound_types(s.value, qname).items():
                         if ty == FLOAT:
@@ -237,6 +259,11 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                             svars.add(b.name)
                 if isinstance(s.value, TupleExpr):
                     svars.add(b.name)
+                vty = self._tc_type(s.value, qname)
+                if isinstance(vty, tuple) and vty[0] == "tuple" and len(s.bindings) > 1:
+                    for b, et in zip(s.bindings, vty[1]):
+                        if getattr(b, "kind", None) == "name" and self._type_is_ptr(et):
+                            svars.add(b.name)
                 if isinstance(s.value, (Lambda, MoveExpr)):
                     svars.add(b.name)
                 ty = self._tc_type(s.value, qname)
@@ -252,6 +279,15 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                             svars.add(name)
                         if ty == STR:
                             svars.add(name)
+                if len(s.bindings) == 1:
+                    try:
+                        vty = self._tc_type(s.value, qname)
+                    except Exception:
+                        vty = None
+                    if self._type_is_ptr(vty):
+                        for b in s.bindings:
+                            if getattr(b, "kind", None) == "name" and b.name:
+                                svars.add(b.name)
             elif isinstance(s, IfStmt):
                 if s.then:
                     for st in s.then.stmts: walk_struct(st)
@@ -331,6 +367,9 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
         self.list_vars[qname] = lvars
         # locals
         local_names = self._collect_locals(fn, qname)
+        # `it` in an `or:` block is the error message (a str pointer).
+        if "it" in local_names:
+            svars.add("it")
         # remove params from locals
         for pn in param_names:
             local_names.discard(pn)
@@ -380,6 +419,15 @@ def compile_source(source, filename=None):
     base = os.path.dirname(os.path.abspath(filename)) if filename else os.getcwd()
     load_modules(program, base)
     elaborate(program)
+    tc = TC(program)
+    errs = tc.check()
+    if errs:
+        raise CodegenError(str(errs[0]))
+    from tools.monomorph import monomorphize
+    try:
+        program = monomorphize(program)
+    except ValueError as e:
+        raise CodegenError(str(e))
     tc = TC(program)
     errs = tc.check()
     if errs:

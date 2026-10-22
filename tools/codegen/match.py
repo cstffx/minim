@@ -71,8 +71,6 @@ class MatchMixin:
             code += i32_const(8)
             code += bytes([0x6A])
             code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
-            if is_float_val:
-                code += bytes([0xBF])  # f64.reinterpret_i64
             code += GLOBAL_SET(self.match_scrut_i64)
             # i = n to exit loop
             code += GLOBAL_GET(self.list_tmp_global)
@@ -86,8 +84,6 @@ class MatchMixin:
             code += bytes([0x0C, 0x00])  # br 0
             code += bytes([0x0B])  # end loop
             code += GLOBAL_GET(self.match_scrut_i64)
-            if is_float_val:
-                code += bytes([0xBF])
             code += RETURN
             idx = self.enc.add_function(typeidx, [], bytes(code))
             name = f"__map_get_{int(is_float_val)}"
@@ -243,7 +239,7 @@ class MatchMixin:
             except Exception:
                 match_ty = None
             if want_value:
-                wtype = self._wasm_type(match_ty) if match_ty is not None else WasmEncoder.I64
+                wtype = self._wasm_type(match_ty) if match_ty not in (None, NIL) else None
             else:
                 wtype = None
             code += BLOCK(wtype if wtype is not None else BLK_VOID)

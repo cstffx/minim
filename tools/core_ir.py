@@ -57,8 +57,15 @@ def desugar_for_stmt(st):
     loop_body = []
     # Bind by borrow, not by value: extracting a non-copyable element by
     # index (`_it[_i]`) would otherwise count as a partial move of `_it`.
-    loop_body.append(LetStmt([Binding("name", varname)],
-                    BorrowExpr(Postfix(NameExpr("_it"), [("index", NameExpr("_i"))]))))
+    named_bindings = [b for b in (st.bindings or []) if _binding_name(b)]
+    if len(named_bindings) > 1:
+        for idx, b in enumerate(named_bindings):
+            elem = Postfix(NameExpr("_it"), [("index", NameExpr("_i"))])
+            field = Postfix(elem, [("field", idx)])
+            loop_body.append(LetStmt([b], field))
+    else:
+        loop_body.append(LetStmt([Binding("name", varname)],
+                        BorrowExpr(Postfix(NameExpr("_it"), [("index", NameExpr("_i"))]))))
     loop_body.extend(body_stmts)
     # Touch `_it` after the user body so the borrow's last-use covers the
     # whole loop body, not just its last textual mention of `_it` -- the
@@ -67,7 +74,11 @@ def desugar_for_stmt(st):
     # must be rejected while the iteration borrow is alive).
     loop_body.append(ExprStmt(NameExpr("_it")))
     loop_body.append(Assign(Place("_i", []), "+=", IntLit("1")))
-    out.append(WhileStmt(cond, Suite(loop_body)))
+    loop_stmt = WhileStmt(cond, Suite(loop_body))
+    # `continue` in a `for` must still run the loop increment. Codegen uses
+    # this marker to wrap the user body in a block that continue targets.
+    loop_stmt._for_continue_count = len(loop_body) - 2
+    out.append(loop_stmt)
     return out
 
 

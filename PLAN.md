@@ -18,13 +18,13 @@ Objetivo: implementar toda la especificacion de Minim 0.1, paso a paso, sin retr
 - [x] Modulos: use, fichero = modulo, visibilidad por `_`.
 
 ## Fase 2: Tipos compuestos y genericos
-- [ ] type (producto) con campos y metodos.
-- [ ] type suma con case (variantes).
-- [ ] trait y generico acotado `T: Trait`.
-- [ ] Tipado estructural, copia/move automatico.
-- [ ] Colecciones: [T], map[K,V], set[T], tuplas, slices.
-- [ ] Opcionales T?, errores T! y `?`, `or`, `or:` con `it`.
-- [ ] Conversiones `as`, `str()`, `parse[T]()`.
+- [x] type (producto) con campos y metodos.
+- [x] type suma con case (variantes).
+- [x] trait y generico acotado `T: Trait`.
+- [x] Tipado estructural, copia/move automatico.
+- [x] Colecciones: [T], map[K,V], set[T], tuplas, slices.
+- [x] Opcionales T?, errores T! y `?`, `or`, `or:` con `it`.
+- [x] Conversiones `as`, `str()`, `parse[T]()`.
 
 ## Fase 3: Patron matching y concurrencia
 - [ ] match con patrones, guardas, else.

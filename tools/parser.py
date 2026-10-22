@@ -545,6 +545,7 @@ class Parser:
     # ---- suite ----
     def suite(self):
         # suite = NEWLINE INDENT { stmt } DEDENT | NEWLINE INDENT DEDENT
+        prev_in_block = self.in_block
         if self.peek().type == "NEWLINE":
             self.advance()
         if self.match("INDENT"):
@@ -557,10 +558,10 @@ class Parser:
                     break
                 stmts.append(self.stmt())
             self.match("DEDENT")
-            self.in_block = False
+            self.in_block = prev_in_block
             return A.Suite(stmts)
         # empty suite without indent (shouldn't happen)
-        self.in_block = False
+        self.in_block = prev_in_block
         return A.Suite([])
 
     def _skip_newlines(self):
@@ -811,8 +812,20 @@ class Parser:
                 self.expect(")")
                 base = A.Postfix(base, [("call", args)])
             elif self.peek().type == "[":
-                # Decide: type args [T, U] vs index/slice
-                if self.peek(1).type == "NAME" and self.peek(2).type in (",", "]"):
+                # Decide: type args [T, U] vs index/slice. `[T]` is only a
+                # type-argument list when the matching `]` is followed by a
+                # call; otherwise it is an index (`xs[i]`).
+                depth = 1
+                j = self.pos + 1
+                while j < len(self.tokens) and depth:
+                    if self.tokens[j].type == "[":
+                        depth += 1
+                    elif self.tokens[j].type == "]":
+                        depth -= 1
+                    j += 1
+                is_typeargs = (depth == 0 and j < len(self.tokens)
+                               and self.tokens[j].type == "(")
+                if is_typeargs:
                     # type args
                     self.advance()
                     tas = [self.type()]
