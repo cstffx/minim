@@ -1,8 +1,9 @@
 # Minim
 
-Lenguaje de programación de alto nivel diseñado **para que una IA escriba código con
-un bajo consumo de tokens**, sin renunciar a tipado estático, verificación de
-préstamos (*borrow checker*) ni compilación rápida de un solo paso.
+Lenguaje de programación de alto nivel diseñado desde el comienzo para mantener un
+balance de legibilidad y bajo consumo de tokens con modelos de inteligencia artificial,
+con tipado estático, verificación de préstamos (*borrow checker*) y compilación rápida
+de un solo paso.
 
 ## Hola, mundo
 
