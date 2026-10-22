@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## STATUS
+- Mantener `status.md` actualizado a medida que se avanza: marcar tareas completadas y anotar bloqueos.
+- Todo agente que modifique el repo debe actualizar `status.md` antes de commitear.
+
 ## IDENTITY
 - Minim: token-minimal statically-typed language, `.mim` files, compiles to WASM.
 - Design axis: minimize BPE-token cost per construct while keeping memory safety w/o GC (ownership+borrow, Rust-like, lifetime-free).
@@ -14,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. Resolve      -> `tools/resolve.py`    -> `docs/INDEXACION.md` (names/scopes, module symbol table; phase 2a)
 4. Core IR      -> `tools/core_ir.py`    -> `docs/CORE-IR.md` (desugars `for`->`while`, surface->reduced AST)
 5. Typecheck    -> `tools/typecheck.py`  -> `docs/DESIGN.md` §7 (types; phase 2b; no overload, structural typing)
-6. Borrow check -> `tools/borrow.py`     -> `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md` (phase 2c; intra-procedural only)
+6. Borrow check -> `babirusas/src/borrowir` -> `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md` (NLL-style, intra-procedural)
 7. Codegen WASM -> `tools/codegen_wasm.py` -> `docs/COMPILACION.md` §2 (int/float-only MVP subset)
 8. Encode       -> `tools/wasm_encoder.py` -> raw wasm binary sections (types/funcs/exports/code)
 - Also: `tools/index.py` implements fase-1 signature scan (`.mimidx`) per `docs/INDEXACION.md` / `docs/INDICE-LLM.md`.
