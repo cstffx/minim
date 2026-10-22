@@ -2,6 +2,7 @@ from tools.typecheck import FLOAT, INT, BOOL, UNKNOWN, STR
 from tools.wasm_encoder import *
 from tools.wasm_encoder import _uleb128_static
 from tools.nodes import *
+from .util import _unsupported
 
 class LayoutsMixin:
         def _wasm_type(self, ty):
@@ -77,7 +78,7 @@ class LayoutsMixin:
             offset = 0
             def walk_str(e):
                 nonlocal offset
-                if isinstance(e, StrLit):
+                if isinstance(e, (StrLit, FStrLit)):
                     if e.value in self.str_value_offsets:
                         self.str_offsets[id(e)] = self.str_value_offsets[e.value]
                     elif id(e) not in self.str_offsets:
@@ -285,7 +286,7 @@ class LayoutsMixin:
                                 size = 8 if wtype in (WasmEncoder.I64, WasmEncoder.F64) else 4
                                 if offset % 8 != 0:
                                     offset += 8 - (offset % 8)
-                                fields.append((f.name, wtype, 8 + offset, ty, f.default))
+                                fields.append((f.name, wtype, 8 + offset, ty, None))
                                 offset += size
                             if offset == 0:
                                 offset = 8

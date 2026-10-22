@@ -3,10 +3,10 @@
 Objetivo: implementar toda la especificacion de Minim 0.1, paso a paso, sin retroceder.
 
 ## Fase 0: Infraestructura
-- [ ] Paquete `minimc` CLI (`run|build|fmt|index|test`).
-- [ ] Parser + lexer estables (tab-only, continuacion en brackets).
-- [ ] Formateador canonico (`minim fmt`).
-- [ ] Indexador (`.mimidx`).
+- [x] Paquete `minimc` CLI (`run|build|fmt|index|test`).
+- [x] Parser + lexer estables (tab-only, continuacion en brackets).
+- [x] Formateador canonico (`minim fmt`).
+- [x] Indexador (`.mimidx`).
 
 ## Fase 1: Nucleo del lenguaje (tipos primitivos y control)
 - [ ] Tipos: int, float, bool, str, bytes, nil, anchos explicitos.
