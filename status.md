@@ -9,7 +9,7 @@ Actualizado automáticamente por los agentes (ver CLAUDE.md).
 - [ ] Indexador `.mimidx`.
 
 ## Fase 1: Nucleo
-- [x] Parser + typecheck + codegen WASM (subset int).
+- [x] Parser + typecheck + codegen WASM (int, float, str, bool, for, match, closures).
 - [ ] Tipos compuestos, genericos, colecciones.
 - [ ] match, for, closures, `it`.
 
