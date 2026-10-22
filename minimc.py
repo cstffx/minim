@@ -110,6 +110,38 @@ def cmd_test(args):
     subprocess.run([sys.executable, "-m", "pytest"], check=False)
     return 0
 
+def cmd_run(args):
+    import subprocess, sys, os, tempfile
+    # build
+    tmp = tempfile.NamedTemporaryFile(suffix=".wasm", delete=False)
+    tmp.close()
+    build_args = ["build", args.file, "-o", tmp.name]
+    # reuse cmd_build by calling main recursively
+    rc = main(build_args)
+    if rc != 0:
+        return rc
+    # execute with node providing env imports
+    js = (
+        "const fs=require('fs');"
+        "const w=fs.readFileSync(process.argv[1]);"
+        "const m=new WebAssembly.Module(w);"
+        "const mem=new WebAssembly.Memory({initial:1});"
+        "const env={"
+        "print:(x)=>process.stdout.write(String(x)),"
+        "print_f64:(x)=>process.stdout.write(String(x)),"
+        "print_str:(ptr,len)=>{const b=new Uint8Array(mem.buffer,ptr,len);process.stdout.write(Buffer.from(b).toString())}"
+        "};"
+        "const i=new WebAssembly.Instance(m,{env,env});"
+        "if(i.exports._start)i.exports._start();"
+        "else if(i.exports.main)console.log(i.exports.main());"
+    )
+    rc = subprocess.run(["node", "-e", js, tmp.name]).returncode
+    try:
+        os.unlink(tmp.name)
+    except OSError:
+        pass
+    return rc
+
 def cmd_fmt(args):
     import subprocess, sys, os
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "fmt.py")
@@ -139,6 +171,10 @@ def main(argv=None):
     p_fmt = sub.add_parser("fmt", help="format a .mim file")
     p_fmt.add_argument("file")
     p_fmt.set_defaults(func=cmd_fmt)
+
+    p_run = sub.add_parser("run", help="build and run a .mim file")
+    p_run.add_argument("file")
+    p_run.set_defaults(func=cmd_run)
 
     args = ap.parse_args(argv)
     return args.func(args)

@@ -4,8 +4,8 @@ Actualizado automáticamente por los agentes (ver CLAUDE.md).
 
 ## Fase 0: Infraestructura
 - [x] Parser/lexer base.
-- [ ] Paquete `minimc` CLI.
-- [ ] Formateador canonico.
+- [x] Paquete `minimc` CLI (build/check/run/fmt/index/test).
+- [x] Formateador canonico (prototipo).
 - [ ] Indexador `.mimidx`.
 
 ## Fase 1: Nucleo
