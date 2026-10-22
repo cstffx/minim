@@ -9,13 +9,13 @@ Objetivo: implementar toda la especificacion de Minim 0.1, paso a paso, sin retr
 - [x] Indexador (`.mimidx`).
 
 ## Fase 1: Nucleo del lenguaje (tipos primitivos y control)
-- [ ] Tipos: int, float, bool, str, bytes, nil, anchos explicitos.
-- [ ] Literales: enteros, floats, str, raw, f-string, bytes, multilinea, listas, mapas, sets, tuplas.
-- [ ] Operadores aritmeticos, comparacion encadenable, logicos, bits, acceso.
-- [ ] Sentencias: let/var, assign, if/elif/else, while, break/continue, return, expr stmt.
-- [ ] Expresiones: precedencia, if-expr, match-expr, closures, `it`.
-- [ ] Funciones: params tipados, retorno inferido, ultima expr = retorno, sin declaraciones adelantadas.
-- [ ] Modulos: use, fichero = modulo, visibilidad por `_`.
+- [x] Tipos: int, float, bool, str, bytes, nil, anchos explicitos.
+- [x] Literales: enteros, floats, str, raw, f-string, bytes, multilinea, listas, mapas, sets, tuplas.
+- [x] Operadores aritmeticos, comparacion encadenable, logicos, bits, acceso.
+- [x] Sentencias: let/var, assign, if/elif/else, while, break/continue, return, expr stmt.
+- [x] Expresiones: precedencia, if-expr, match-expr, closures, `it`.
+- [x] Funciones: params tipados, retorno inferido, ultima expr = retorno, sin declaraciones adelantadas.
+- [x] Modulos: use, fichero = modulo, visibilidad por `_`.
 
 ## Fase 2: Tipos compuestos y genericos
 - [ ] type (producto) con campos y metodos.

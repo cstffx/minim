@@ -421,6 +421,12 @@ class MapExpr:
 
 
 @dataclass
+class SetExpr:
+    items: List["Arg"]
+    span: Optional["Span"] = None
+
+
+@dataclass
 class MoveExpr:
     lambda_: "Lambda"
     span: Optional["Span"] = None

@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.parser import parse
 from tools.core_ir import elaborate
 from tools.resolve import Resolver, Scope, Symbol, SymKind
-from tools.typecheck import TC, FLOAT, INT, BOOL, UNKNOWN, STR
+from tools.typecheck import TC, FLOAT, INT, BOOL, UNKNOWN, STR, BYTES
 from tools.wasm_encoder import *
 from tools.wasm_encoder import _uleb128_static
 from tools.nodes import *
@@ -15,11 +15,7 @@ class CodegenError(Exception):
     pass
 
 
-def _unsupported(what, node=None):
-    span = getattr(node, "span", None)
-    loc = f"{span.line}:{span.col}" if span else "?"
-    raise CodegenError(f"{loc}: codegen no soporta {what} (MVP int/float/list/struct subset)")
-
+from .util import _unsupported
 
 from .match import MatchMixin
 from .layouts import LayoutsMixin
@@ -56,6 +52,7 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
         self.list_val_i64 = self.enc.add_global(WasmEncoder.I64, True, i64_const(0))
         self.list_val_f64 = self.enc.add_global(WasmEncoder.F64, True, f64_const(0.0))
         self.list_idx_global = self.enc.add_global(WasmEncoder.I32, True, i32_const(0))
+        self.set_found_global = self.enc.add_global(WasmEncoder.I32, True, i32_const(0))
         self.match_scrut_i64 = self.enc.add_global(WasmEncoder.I64, True, i64_const(0))
         self.match_scrut_f64 = self.enc.add_global(WasmEncoder.F64, True, f64_const(0.0))
         self.match_addr_i64 = self.enc.add_global(WasmEncoder.I64, True, i64_const(0))
@@ -82,6 +79,14 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
             if isinstance(e, MatchExpr):
                 for name in self._match_bound_types(e, qname):
                     names.add(name)
+                _collect_from_expr(e.expr)
+                for arm in (e.arms or []):
+                    if arm.guard is not None:
+                        _collect_from_expr(arm.guard)
+                    if isinstance(arm.body, Suite):
+                        walk_suite(arm.body)
+                    elif arm.body is not None:
+                        _collect_from_expr(arm.body)
             elif isinstance(e, IfExpr):
                 _collect_from_expr(e.then)
                 _collect_from_expr(e.else_)
@@ -99,13 +104,15 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                     elif op[0] in ("index", "slice"):
                         if isinstance(op[1], object) and not isinstance(op[1], str):
                             _collect_from_expr(op[1])
-            elif isinstance(e, (TupleExpr, ListExpr, MapExpr)):
+            elif isinstance(e, (TupleExpr, ListExpr, MapExpr, SetExpr)):
                 for a in (getattr(e, "items", None) or []):
                     _collect_from_expr(a.value if isinstance(a, Arg) else a)
             elif isinstance(e, Call) if False else False:
                 pass
         def walk(s):
-            if isinstance(s, (LetStmt, VarStmt)):
+            if isinstance(s, (LetDecl, VarDecl)):
+                _collect_from_expr(s.value)
+            elif isinstance(s, (LetStmt, VarStmt)):
                 for b in s.bindings:
                     if b.kind == "name" and b.name:
                         names.add(b.name)
@@ -220,7 +227,7 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                                 ty = self.tc._atype(b.type_)
                                 if isinstance(ty, tuple) and ty[0] == "named":
                                     svars.add(b.name)
-                                if ty == STR:
+                                if ty == STR or ty == BYTES:
                                     svars.add(b.name)
                             except Exception:
                                 pass
@@ -235,9 +242,9 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                 ty = self._tc_type(s.value, qname)
                 if isinstance(ty, tuple) and ty[0] == "tuple":
                     svars.add(b.name)
-                if ty == STR:
+                if ty == STR or ty == BYTES:
                     svars.add(b.name)
-                if isinstance(ty, tuple) and ty[0] == "map":
+                if isinstance(ty, tuple) and ty[0] in ("map", "set", "func"):
                     svars.add(b.name)
                 if isinstance(s.value, MatchExpr):
                     for name, ty in self._match_bound_types(s.value, qname).items():
@@ -367,8 +374,11 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
 
 
 
-def compile_source(source):
+def compile_source(source, filename=None):
     program = parse(source)
+    from tools.modules import load_modules
+    base = os.path.dirname(os.path.abspath(filename)) if filename else os.getcwd()
+    load_modules(program, base)
     elaborate(program)
     tc = TC(program)
     errs = tc.check()

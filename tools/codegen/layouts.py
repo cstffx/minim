@@ -13,14 +13,14 @@ class LayoutsMixin:
                     if ty[1] == "float":
                         return WasmEncoder.F64
                     if ty[1] == "bool":
-                        return WasmEncoder.I32
+                        return WasmEncoder.I64
                     if ty[1] == "str":
+                        return WasmEncoder.I32
+                    if ty[1] == "bytes":
                         return WasmEncoder.I32
                 if ty[0] == "named":
                     return WasmEncoder.I32
-                if ty[0] == "list":
-                    return WasmEncoder.I32
-                if ty[0] == "tuple":
+                if ty[0] in ("list", "map", "set", "tuple", "func"):
                     return WasmEncoder.I32
             return WasmEncoder.I64
 
@@ -45,14 +45,112 @@ class LayoutsMixin:
                         params.append(self._wasm_type(self.tc._atype(p.type_)))
                     else:
                         params.append(WasmEncoder.I64)
-            # return type
+            # return type: annotation first, otherwise the type checker's
+            # inferred signature (phase 1: last expression is the return value).
             if fn.ret is not None:
-                results = [self._wasm_type(self.tc._atype(fn.ret))]
+                ret_ty = self.tc._atype(fn.ret)
             else:
+                ret_ty = self._inferred_ret(fn, self_type)
+            if ret_ty is None or ret_ty == ("p", "nil"):
                 results = []
+            else:
+                results = [self._wasm_type(ret_ty)]
             typeidx = self.enc.add_type(params, results)
-            # placeholder func index assigned later; store
-            self.func_typeidx[fn.name if self_type is None else f"{self_type}.{fn.name}"] = typeidx
+            qname = fn.name if self_type is None else f"{self_type}.{fn.name}"
+            self.func_typeidx[qname] = typeidx
+            if not hasattr(self, "func_ret"):
+                self.func_ret = {}
+            self.func_ret[qname] = ret_ty
+
+        def _inferred_ret(self, fn, self_type):
+            try:
+                if self_type is None:
+                    sym = self.tc.module_scope.lookup(fn.name)
+                else:
+                    td = self.tc.type_defs.get(self_type)
+                    ts = self.tc.resolver.type_scopes.get(id(td)) if td is not None else None
+                    sym = ts.lookup(fn.name) if ts is not None else None
+                ty = getattr(sym, "ty", None)
+                if isinstance(ty, tuple) and ty[0] == "func":
+                    return ty[2]
+            except Exception:
+                pass
+            return None
+
+        # ---- module storage / entry point (phase 1) ----
+        def _module_decls(self):
+            out = []
+            for stmt in self.program.stmts:
+                if isinstance(stmt, LetDecl):
+                    out.append((stmt.name, stmt.value))
+                elif isinstance(stmt, VarDecl):
+                    for b in stmt.bindings:
+                        if b.kind == "name" and b.name:
+                            out.append((b.name, stmt.value))
+            return out
+
+        def _collect_module_storage(self):
+            """Allocate one wasm global per top-level let/var (file = module)."""
+            self.module_globals = {}
+            for name, value in self._module_decls():
+                sym = self.tc.module_scope.lookup(name)
+                ty = getattr(sym, "ty", None)
+                if ty is None:
+                    ty = self._tc_type(value, None)
+                wtype = self._wasm_type(ty)
+                if wtype == WasmEncoder.F64:
+                    init = f64_const(0.0)
+                elif wtype == WasmEncoder.I32:
+                    init = i32_const(0)
+                else:
+                    init = i64_const(0)
+                idx = self.enc.add_global(wtype, True, init)
+                self.module_globals[name] = (idx, wtype, ty)
+
+        def _gen_module_decl(self, st, code, qname):
+            pairs = []
+            if isinstance(st, LetDecl):
+                pairs = [(st.name, st.value)]
+            elif isinstance(st, VarDecl):
+                for b in st.bindings:
+                    if b.kind == "name" and b.name:
+                        pairs.append((b.name, st.value))
+            for name, value in pairs:
+                info = self.module_globals.get(name)
+                if info is None:
+                    continue
+                idx, wtype, ty = info
+                self._gen_expr(value, code, qname)
+                if isinstance(value, (Lambda, MoveExpr)):
+                    lname = getattr(self, "_last_lambda_name", None)
+                    if lname is not None:
+                        captured = list(getattr(self, "_last_lambda_captured", []))
+                        self.lambda_vars.setdefault(qname, {})[name] = (lname, captured)
+                        self.lambda_vars.setdefault(None, {})[name] = (lname, captured)
+                if wtype == WasmEncoder.F64 and not self._is_float(value, qname):
+                    code += bytes([0xB9])  # f64.convert_i64_s
+                elif wtype != WasmEncoder.F64 and self._is_float(value, qname):
+                    code += bytes([0xB0])  # i64.trunc_f64_s
+                code += GLOBAL_SET(idx)
+
+        def _gen_main_call(self, code):
+            """Call main() from _start, dropping an integer result if any."""
+            if "main" not in self.func_index:
+                return
+            code += CALL(self.func_index["main"])
+            rty = getattr(self, "func_ret", {}).get("main")
+            if rty is not None and rty != ("p", "nil"):
+                code += DROP
+
+        def _intern_str(self, value):
+            if value in self.str_value_offsets:
+                return self.str_value_offsets[value]
+            data = value.encode("utf-8") + b"\x00"
+            off = getattr(self, "_str_next_offset", 0)
+            self.str_value_offsets[value] = off
+            self.enc.add_data(off, data)
+            self._str_next_offset = off + len(data)
+            return off
 
         def generate(self):
             # scope map for type queries
@@ -78,7 +176,20 @@ class LayoutsMixin:
             offset = 0
             def walk_str(e):
                 nonlocal offset
-                if isinstance(e, (StrLit, FStrLit)):
+                if isinstance(e, (StrLit, RStrLit, MlStrLit, BytesLit)):
+                    if e.value in self.str_value_offsets:
+                        self.str_offsets[id(e)] = self.str_value_offsets[e.value]
+                    elif id(e) not in self.str_offsets:
+                        raw = (e.value.encode("latin-1") if isinstance(e, BytesLit)
+                               else e.value.encode("utf-8"))
+                        b = raw + b"\x00"
+                        self.str_offsets[id(e)] = offset
+                        self.str_value_offsets[e.value] = offset
+                        self.enc.add_data(offset, b)
+                        offset += len(b)
+                    else:
+                        self.str_value_offsets[e.value] = self.str_offsets[id(e)]
+                elif isinstance(e, FStrLit):
                     if e.value in self.str_value_offsets:
                         self.str_offsets[id(e)] = self.str_value_offsets[e.value]
                     elif id(e) not in self.str_offsets:
@@ -108,7 +219,7 @@ class LayoutsMixin:
                                 walk_str(op[1])
                             if len(op) > 2 and op[2] is not None:
                                 walk_str(op[2])
-                elif isinstance(e, (TupleExpr, ListExpr, MapExpr)):
+                elif isinstance(e, (TupleExpr, ListExpr, MapExpr, SetExpr)):
                     for a in (getattr(e, "items", None) or []):
                         val = a.value if isinstance(a, Arg) else a
                         walk_str(val)
@@ -131,6 +242,16 @@ class LayoutsMixin:
                                 offset += len(b)
                 elif isinstance(e, IfExpr):
                     walk_str(e.cond); walk_str(e.then); walk_str(e.else_)
+                elif isinstance(e, MatchExpr):
+                    walk_str(e.expr)
+                    for arm in (e.arms or []):
+                        if arm.guard is not None:
+                            walk_str(arm.guard)
+                        if isinstance(arm.body, Suite):
+                            for st in (arm.body.stmts if hasattr(arm.body, "stmts") else []):
+                                walk_str_stmt(st)
+                        elif arm.body is not None:
+                            walk_str(arm.body)
                 elif isinstance(e, (LetStmt, VarStmt)):
                     walk_str(e.value)
                 elif isinstance(e, ExprStmt):
@@ -202,6 +323,8 @@ class LayoutsMixin:
                             for st in m.node.body.stmts:
                                 walk_str_stmt(st)
             self._compute_struct_layouts()
+            self._str_next_offset = offset
+            self._collect_module_storage()
             self.collect_functions()
             # pre-assign function indices so recursive calls resolve
             idx = len(self.enc.imports)
@@ -224,12 +347,34 @@ class LayoutsMixin:
                     for m in stmt.members:
                         if isinstance(m.node, FnDecl):
                             self._gen_func(m.node, stmt.name)
-            # exports: export all top-level functions named main if present, plus all? Export all for testing
+            # module body / entry point: top-level statements + call to main
+            self._gen_entry_point()
+            # exports: export all top-level functions, plus `_start`
             for stmt in self.program.stmts:
                 if isinstance(stmt, FnDecl):
+                    if stmt.name.startswith("_") or stmt.name.split(".")[-1].startswith("_"):
+                        continue
                     if stmt.name in self.func_index:
                         self.enc.add_export_func(stmt.name, self.func_index[stmt.name])
+            self.enc.add_export_func("_start", self.func_index["_start"])
+            self._str_next_offset = offset
             return self.enc.encode()
+
+        def _gen_entry_point(self):
+            """Compile the file body (module declarations run in order)."""
+            body = []
+            for stmt in self.program.stmts:
+                if isinstance(stmt, (LetDecl, VarDecl)):
+                    body.append(stmt)
+            for stmt in self.program.stmts:
+                if not isinstance(stmt, (FnDecl, TypeDecl, TraitDecl, UseDecl, LetDecl, VarDecl)):
+                    body.append(stmt)
+            if "main" in self.func_index:
+                body.append(ExprStmt(NameExpr("__startMain__")))
+            fn = FnDecl("_start", [], [], None, Suite(body))
+            self.func_typeidx["_start"] = self.enc.add_type([], [])
+            self.func_index["_start"] = len(self.enc.imports) + len(self.enc.functions)
+            self._gen_func(fn, None)
 
         def _is_float(self, e, qname):
             if isinstance(e, FloatLit):
@@ -240,7 +385,13 @@ class LayoutsMixin:
                 return self._is_float(e.left, qname) or self._is_float(e.right, qname)
             if isinstance(e, UnaryOp):
                 return self._is_float(e.operand, qname)
-            return False
+            try:
+                ty = self._tc_type(e, qname)
+                if isinstance(ty, tuple) and ty[0] == "borrow":
+                    ty = ty[1]
+                return ty == FLOAT
+            except Exception:
+                return False
 
         def _tc_type(self, e, qname):
             scope = self.scope_map.get(qname, self.tc.module_scope)

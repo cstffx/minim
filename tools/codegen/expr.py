@@ -1,33 +1,1186 @@
-from tools.typecheck import FLOAT, INT, BOOL, UNKNOWN, STR
+from tools.typecheck import FLOAT, INT, BOOL, UNKNOWN, STR, BYTES
 from tools.wasm_encoder import *
 from tools.wasm_encoder import _uleb128_static
 from tools.nodes import *
+from .util import _unsupported
+from tools.lexer import decode_escapes
 from tools.resolve import Resolver, Scope, Symbol, SymKind
 
 class ExprMixin:
+        # ------------------------------------------------------------------
+        # String runtime helpers (phase 1: f-strings / str() conversions)
+        # ------------------------------------------------------------------
+        def _ensure_str_helpers(self):
+            if getattr(self, "_str_helpers", None):
+                return self._str_helpers
+            self._str_helpers = {}
+
+            # __str_len(ptr) -> i32
+            t = self.enc.add_type([WasmEncoder.I32], [WasmEncoder.I32])
+            c = bytearray()
+            c += i32_const(0)
+            c += local_set(1)
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(0)
+            c += local_get(1)
+            c += bytes([0x6A])
+            c += bytes([0x2D, 0x00, 0x00])  # i32.load8_u
+            c += bytes([0x45])              # i32.eqz
+            c += bytes([0x0D, 0x01])
+            c += local_get(1)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(1)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += local_get(1)
+            idx = self.enc.add_function(t, [WasmEncoder.I32], bytes(c))
+            self._str_helpers["len"] = idx
+
+            # __str_concat(a, b) -> i32
+            t = self.enc.add_type([WasmEncoder.I32, WasmEncoder.I32], [WasmEncoder.I32])
+            c = bytearray()
+            c += local_get(0)
+            c += CALL(self._str_helpers["len"])
+            c += local_set(2)  # lenA
+            c += local_get(1)
+            c += CALL(self._str_helpers["len"])
+            c += local_set(3)  # lenB
+            c += GLOBAL_GET(self.heap_global)
+            c += local_set(4)  # base
+            c += GLOBAL_GET(self.heap_global)
+            c += local_get(2)
+            c += local_get(3)
+            c += bytes([0x6A])
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += bytes([0x6A])
+            c += GLOBAL_SET(self.heap_global)
+            c += i32_const(0)
+            c += local_set(5)  # i
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(5)
+            c += local_get(2)
+            c += bytes([0x48])  # lt_s
+            c += bytes([0x45])
+            c += bytes([0x0D, 0x01])
+            c += local_get(4)
+            c += local_get(5)
+            c += bytes([0x6A])
+            c += local_get(0)
+            c += local_get(5)
+            c += bytes([0x6A])
+            c += bytes([0x2D, 0x00, 0x00])
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(5)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(5)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += i32_const(0)
+            c += local_set(5)
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(5)
+            c += local_get(3)
+            c += bytes([0x48])
+            c += bytes([0x45])
+            c += bytes([0x0D, 0x01])
+            c += local_get(4)
+            c += local_get(2)
+            c += bytes([0x6A])
+            c += local_get(5)
+            c += bytes([0x6A])
+            c += local_get(1)
+            c += local_get(5)
+            c += bytes([0x6A])
+            c += bytes([0x2D, 0x00, 0x00])
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(5)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(5)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += local_get(4)
+            c += local_get(2)
+            c += bytes([0x6A])
+            c += local_get(3)
+            c += bytes([0x6A])
+            c += i32_const(0)
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(4)
+            idx = self.enc.add_function(t, [WasmEncoder.I32, WasmEncoder.I32, WasmEncoder.I32, WasmEncoder.I32,
+                                            WasmEncoder.I32], bytes(c))
+            self._str_helpers["concat"] = idx
+
+            # __to_str_i64(n) -> i32   (decimal, null terminated)
+            t = self.enc.add_type([WasmEncoder.I64], [WasmEncoder.I32])
+            c = bytearray()
+            c += GLOBAL_GET(self.heap_global)
+            c += local_set(1)  # base
+            c += GLOBAL_GET(self.heap_global)
+            c += i32_const(32)
+            c += bytes([0x6A])
+            c += GLOBAL_SET(self.heap_global)
+            c += local_get(1)
+            c += i32_const(31)
+            c += bytes([0x6A])
+            c += local_set(2)  # pos
+            c += local_get(2)
+            c += i32_const(0)
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(0)
+            c += bytes([0x50])  # i64.eqz
+            c += bytes([0x04, 0x40])
+            c += local_get(2)
+            c += i32_const(1)
+            c += bytes([0x6B])
+            c += local_set(2)
+            c += local_get(1)
+            c += local_get(2)
+            c += bytes([0x6A])
+            c += i32_const(48)
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(1)
+            c += local_get(2)
+            c += bytes([0x6A])
+            c += RETURN
+            c += END
+            c += local_get(0)
+            c += i64_const(0)
+            c += bytes([0x53])  # i64.lt_s
+            c += local_set(3)   # neg
+            c += local_get(3)
+            c += bytes([0x04, 0x40])
+            c += local_get(0)
+            c += i64_const(-1)
+            c += bytes([0x7E])  # i64.mul
+            c += local_set(0)
+            c += END
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(0)
+            c += bytes([0x50])  # eqz
+            c += bytes([0x0D, 0x01])
+            c += local_get(2)
+            c += i32_const(1)
+            c += bytes([0x6B])
+            c += local_set(2)
+            c += local_get(1)
+            c += local_get(2)
+            c += bytes([0x6A])
+            c += local_get(0)
+            c += i64_const(10)
+            c += bytes([0x82])  # i64.rem_u
+            c += bytes([0xA7])  # i32.wrap_i64
+            c += i32_const(48)
+            c += bytes([0x6A])
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(0)
+            c += i64_const(10)
+            c += bytes([0x80])  # i64.div_u
+            c += local_set(0)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += local_get(3)
+            c += bytes([0x04, 0x40])
+            c += local_get(2)
+            c += i32_const(1)
+            c += bytes([0x6B])
+            c += local_set(2)
+            c += local_get(1)
+            c += local_get(2)
+            c += bytes([0x6A])
+            c += i32_const(45)
+            c += bytes([0x3A, 0x00, 0x00])
+            c += END
+            c += local_get(1)
+            c += local_get(2)
+            c += bytes([0x6A])
+            idx = self.enc.add_function(t, [WasmEncoder.I32, WasmEncoder.I32, WasmEncoder.I32,
+                                            WasmEncoder.I64], bytes(c))
+            self._str_helpers["i64"] = idx
+
+            # __to_str_f64(x, precision) -> i32
+            t = self.enc.add_type([WasmEncoder.F64, WasmEncoder.I32], [WasmEncoder.I32])
+            c = bytearray()
+            # neg = x < 0
+            c += local_get(0)
+            c += f64_const(0.0)
+            c += bytes([0x63])  # f64.lt
+            c += local_set(6)
+            # ax = abs(x)
+            c += local_get(0)
+            c += bytes([0x99])  # f64.abs
+            c += local_set(12)
+            # scale = 10^prec
+            c += i64_const(1)
+            c += local_set(8)
+            c += i32_const(0)
+            c += local_set(4)
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(4)
+            c += local_get(1)
+            c += bytes([0x48])
+            c += bytes([0x45])
+            c += bytes([0x0D, 0x01])
+            c += local_get(8)
+            c += i64_const(10)
+            c += bytes([0x7E])
+            c += local_set(8)
+            c += local_get(4)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(4)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            # n = trunc(ax*scale + 0.5)
+            c += local_get(12)
+            c += local_get(8)
+            c += bytes([0xBA])  # f64.convert_i64_s
+            c += bytes([0xA2])  # f64.mul
+            c += f64_const(0.5)
+            c += bytes([0xA0])  # f64.add
+            c += bytes([0xB0])  # i64.trunc_f64_s
+            c += local_set(11)
+            # intpart = n / scale; frac = n % scale
+            c += local_get(11)
+            c += local_get(8)
+            c += bytes([0x80])  # i64.div_u
+            c += local_set(9)
+            c += local_get(11)
+            c += local_get(8)
+            c += bytes([0x82])  # i64.rem_u
+            c += local_set(10)
+            c += local_get(6)
+            c += bytes([0x04, 0x40])
+            c += local_get(9)
+            c += i64_const(-1)
+            c += bytes([0x7E])
+            c += local_set(9)
+            c += END
+            # ptr = to_str_i64(intpart)
+            c += local_get(9)
+            c += CALL(self._str_helpers["i64"])
+            c += local_set(2)
+            c += local_get(1)
+            c += bytes([0x45])
+            c += bytes([0x04, 0x40])
+            c += local_get(2)
+            c += RETURN
+            c += END
+            # end = ptr + strlen(ptr); *end = '.'; end++
+            c += local_get(2)
+            c += local_get(2)
+            c += CALL(self._str_helpers["len"])
+            c += bytes([0x6A])
+            c += local_set(3)
+            c += local_get(3)
+            c += i32_const(46)
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(3)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(3)
+            # divisor = 10^(prec-1)
+            c += i64_const(1)
+            c += local_set(13)
+            c += i32_const(0)
+            c += local_set(4)
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(4)
+            c += local_get(1)
+            c += i32_const(1)
+            c += bytes([0x6B])
+            c += bytes([0x48])
+            c += bytes([0x45])
+            c += bytes([0x0D, 0x01])
+            c += local_get(13)
+            c += i64_const(10)
+            c += bytes([0x7E])
+            c += local_set(13)
+            c += local_get(4)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(4)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            # emit exactly prec digits
+            c += i32_const(0)
+            c += local_set(4)
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(4)
+            c += local_get(1)
+            c += bytes([0x48])
+            c += bytes([0x45])
+            c += bytes([0x0D, 0x01])
+            c += local_get(3)
+            c += local_get(10)
+            c += local_get(13)
+            c += bytes([0x80])  # div_u
+            c += bytes([0xA7])
+            c += i32_const(48)
+            c += bytes([0x6A])
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(10)
+            c += local_get(13)
+            c += bytes([0x82])  # rem_u
+            c += local_set(10)
+            c += local_get(13)
+            c += i64_const(10)
+            c += bytes([0x80])  # div_u
+            c += local_set(13)
+            c += local_get(3)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(3)
+            c += local_get(4)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(4)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += local_get(3)
+            c += i32_const(0)
+            c += bytes([0x3A, 0x00, 0x00])
+            c += local_get(2)
+            idx = self.enc.add_function(t, [WasmEncoder.I32, WasmEncoder.I32, WasmEncoder.I32,
+                                            WasmEncoder.I32, WasmEncoder.I32, WasmEncoder.I32,
+                                            WasmEncoder.I64, WasmEncoder.I64, WasmEncoder.I64,
+                                            WasmEncoder.I64, WasmEncoder.F64, WasmEncoder.I64], bytes(c))
+            self._str_helpers["f64"] = idx
+            return self._str_helpers
+
+        def _ensure_pow_helper(self):
+            if getattr(self, "_pow_helper", None) is not None:
+                return self._pow_helper
+            t = self.enc.add_type([WasmEncoder.I64, WasmEncoder.I64], [WasmEncoder.I64])
+            c = bytearray()
+            c += i64_const(1)
+            c += local_set(2)          # acc
+            c += i64_const(0)
+            c += local_set(3)          # i
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(3)
+            c += local_get(1)
+            c += bytes([0x53])         # i64.lt_s
+            c += bytes([0x45])
+            c += bytes([0x0D, 0x01])
+            c += local_get(2)
+            c += local_get(0)
+            c += bytes([0x7E])         # i64.mul
+            c += local_set(2)
+            c += local_get(3)
+            c += i64_const(1)
+            c += bytes([0x7C])         # i64.add
+            c += local_set(3)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += local_get(2)
+            self._pow_helper = self.enc.add_function(
+                t, [WasmEncoder.I64, WasmEncoder.I64], bytes(c))
+            return self._pow_helper
+
+        def _ensure_str_contains_helper(self):
+            if getattr(self, "_str_contains_helper", None) is not None:
+                return self._str_contains_helper
+            t = self.enc.add_type([WasmEncoder.I32, WasmEncoder.I32], [WasmEncoder.I32])
+            c = bytearray()
+            c += local_get(0)
+            c += CALL(self._ensure_str_helpers()["len"])
+            c += local_set(2)                     # hlen
+            c += local_get(1)
+            c += CALL(self._ensure_str_helpers()["len"])
+            c += local_set(3)                     # nlen
+            c += local_get(3)
+            c += bytes([0x45])                    # nlen == 0 -> true
+            c += bytes([0x04, 0x40])
+            c += i32_const(1)
+            c += RETURN
+            c += END
+            c += i32_const(0)
+            c += local_set(4)                     # i
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(4)
+            c += local_get(2)
+            c += local_get(3)
+            c += bytes([0x6B])                    # hlen - nlen
+            c += bytes([0x4A])                    # i > hlen-nlen
+            c += bytes([0x0D, 0x01])
+            c += i32_const(0)
+            c += local_set(5)                     # j
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(5)
+            c += local_get(3)
+            c += bytes([0x4E])                    # j >= nlen
+            c += bytes([0x04, 0x40])
+            c += i32_const(1)
+            c += RETURN
+            c += END
+            c += local_get(0)
+            c += local_get(4)
+            c += bytes([0x6A])
+            c += local_get(5)
+            c += bytes([0x6A])
+            c += bytes([0x2D, 0x00, 0x00])        # hay[i+j]
+            c += local_get(1)
+            c += local_get(5)
+            c += bytes([0x6A])
+            c += bytes([0x2D, 0x00, 0x00])        # needle[j]
+            c += bytes([0x47])                    # i32.ne
+            c += bytes([0x0D, 0x01])              # mismatch: exit inner loop
+            c += local_get(5)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(5)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += local_get(4)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(4)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += i32_const(0)
+            self._str_contains_helper = self.enc.add_function(
+                t, [WasmEncoder.I32, WasmEncoder.I32, WasmEncoder.I32,
+                    WasmEncoder.I32, WasmEncoder.I32], bytes(c))
+            return self._str_contains_helper
+
+        def _type_from_tc(self, ty):
+            if ty == FLOAT:
+                return Type(TypeName("float", []))
+            if ty == INT:
+                return Type(TypeName("int", []))
+            if ty == BOOL:
+                return Type(TypeName("bool", []))
+            if ty == STR:
+                return Type(TypeName("str", []))
+            if isinstance(ty, tuple) and ty[0] == "named":
+                return Type(TypeName(ty[1], []))
+            if isinstance(ty, tuple) and ty[0] == "list":
+                return Type(TypeList(self._type_from_tc(ty[1])))
+            return None
+
+        def _load_captured(self, names, code, qname):
+            for v in names:
+                lmap = self.locals_map.get(qname, {})
+                if v in lmap:
+                    code += local_get(lmap[v])
+                elif v in getattr(self, "module_globals", {}):
+                    code += GLOBAL_GET(self.module_globals[v][0])
+                else:
+                    self._gen_expr(NameExpr(v), code, qname)
+
+        def _gen_list_map(self, code, qname, recv, arg, calling_elem_ty, method):
+            """list.map(fn)/list.filter(fn) -> new list."""
+            src_elem = calling_elem_ty[1] if (isinstance(calling_elem_ty, tuple) and len(calling_elem_ty) > 1) else UNKNOWN
+            if isinstance(arg, Lambda) and arg.params and arg.params[0].type_ is None and src_elem != UNKNOWN:
+                arg.params[0].type_ = self._type_from_tc(src_elem)
+            fty = self._tc_type(arg, qname)
+            res_ty = fty[2] if (isinstance(fty, tuple) and fty[0] == "func") else UNKNOWN
+            if method == "filter":
+                res_ty = src_elem
+            is_float_res = (res_ty == FLOAT)
+            # receiver -> slice_base_global
+            self._gen_expr(recv, code, qname)
+            code += GLOBAL_SET(self.slice_base_global)
+            # generate lambda (leave/drop function pointer)
+            self._gen_expr(arg, code, qname)
+            code += DROP
+            fname = getattr(self, "_last_lambda_name", None)
+            captured = list(getattr(self, "_last_lambda_captured", []))
+            if fname is None or fname not in self.func_index:
+                _unsupported("list.map necesita una closure", None)
+            # allocate result header + data (max = src len)
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_SET(self.tmp_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += i32_const(16)
+            code += bytes([0x6A])
+            # capacity = receiver length (read from the source list, not the heap)
+            code += GLOBAL_GET(self.slice_base_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.heap_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += i32_const(0)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.slice_base_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(4)
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += i32_const(16)
+            code += bytes([0x6A])
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(8)
+            code += i32_const(0)
+            code += GLOBAL_SET(self.list_idx_global)
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += GLOBAL_GET(self.slice_base_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x48]); code += bytes([0x45])
+            code += bytes([0x0D, 0x01])
+            # load element
+            code += GLOBAL_GET(self.slice_base_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            if src_elem == FLOAT:
+                code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_SET(self.list_val_f64)
+            else:
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                if self._type_is_ptr(src_elem):
+                    code += bytes([0xA7])
+                code += GLOBAL_SET(self.list_val_i64)
+            # call lambda: captured params first, then the element
+            self._load_captured(captured, code, qname)
+            if src_elem == FLOAT:
+                code += GLOBAL_GET(self.list_val_f64)
+            else:
+                if self._type_is_ptr(src_elem):
+                    code += GLOBAL_GET(self.list_val_i64)
+                    code += bytes([0xA7])
+                else:
+                    code += GLOBAL_GET(self.list_val_i64)
+            code += CALL(self.func_index[fname])
+            if method == "filter":
+                # value on stack is bool (i64); keep element if truthy
+                code += i64_const(0)
+                code += I64_NE
+                code += bytes([0x04, 0x40])
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                # reload element
+                code += GLOBAL_GET(self.slice_base_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.list_idx_global)
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                if src_elem == FLOAT:
+                    code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(0)
+                    code += bytes([0x39]); code += _uleb128_static(3); code += _uleb128_static(0)
+                else:
+                    code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                    code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+                # len++
+                code += GLOBAL_GET(self.tmp_global)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += i32_const(1)
+                code += bytes([0x6A])
+                code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += END
+            else:
+                # store result at data[len]
+                if is_float_res:
+                    code += GLOBAL_SET(self.list_val_f64)
+                else:
+                    code += GLOBAL_SET(self.list_val_i64)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += i32_const(8)
+                code += bytes([0x6C])
+                code += bytes([0x6A])
+                if is_float_res:
+                    code += GLOBAL_GET(self.list_val_f64)
+                    code += bytes([0x39]); code += _uleb128_static(3); code += _uleb128_static(0)
+                else:
+                    code += GLOBAL_GET(self.list_val_i64)
+                    code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.tmp_global)
+                code += GLOBAL_GET(self.tmp_global)
+                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                code += i32_const(1)
+                code += bytes([0x6A])
+                code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.list_idx_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            code += GLOBAL_GET(self.tmp_global)
+
+        def _type_is_ptr(self, ty):
+            if isinstance(ty, tuple):
+                if ty[0] == "p":
+                    return ty[1] in ("str", "bytes")
+                if ty[0] in ("named", "list", "map", "set", "tuple", "func"):
+                    return True
+            return False
+
+        def _operand_is_ptr(self, e, qname):
+            ty = self._tc_type(e, qname)
+            if isinstance(ty, tuple):
+                if ty[0] == "p":
+                    return ty[1] in ("str", "bytes")
+                if ty[0] in ("named", "list", "map", "set", "tuple", "func"):
+                    return True
+            return False
+
+        def _gen_contains(self, needle, haystack, code, qname):
+            hty = self._tc_type(haystack, qname)
+            if isinstance(hty, tuple) and hty[0] == "borrow":
+                hty = hty[1]
+            # haystack -> tmp_global
+            self._gen_expr(haystack, code, qname)
+            code += GLOBAL_SET(self.tmp_global)
+            if hty == STR:
+                self._gen_expr(needle, code, qname)
+                code += GLOBAL_SET(self.list_tmp_global)
+                code += GLOBAL_GET(self.tmp_global)
+                code += GLOBAL_GET(self.list_tmp_global)
+                code += CALL(self._ensure_str_contains_helper())
+                return
+            if not (isinstance(hty, tuple) and hty[0] in ("list", "set", "map")):
+                code += i32_const(0)
+                return
+            if hty[0] == "map":
+                elem_ty = hty[1]
+                stride = 16
+                is_float = (elem_ty == FLOAT)
+            else:
+                elem_ty = hty[1] if len(hty) > 1 else UNKNOWN
+                stride = 8
+                is_float = (elem_ty == FLOAT)
+            # needle -> list_val
+            self._gen_expr(needle, code, qname)
+            if is_float:
+                code += GLOBAL_SET(self.list_val_f64)
+            else:
+                if self._operand_is_ptr(needle, qname):
+                    code += bytes([0xAC])  # pointer -> i64
+                code += GLOBAL_SET(self.list_val_i64)
+            code += i32_const(0)
+            code += GLOBAL_SET(self.list_idx_global)
+            code += i32_const(0)
+            code += GLOBAL_SET(self.set_found_global)
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x48]); code += bytes([0x45])
+            code += bytes([0x0D, 0x01])
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(8)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(stride)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            if is_float:
+                code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.list_val_f64)
+                code += F64_EQ
+            else:
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.list_val_i64)
+                code += I64_EQ
+            code += bytes([0x04, 0x40])
+            code += i32_const(1)
+            code += GLOBAL_SET(self.set_found_global)
+            code += bytes([0x0C, 0x02])
+            code += END
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.list_idx_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            code += GLOBAL_GET(self.set_found_global)
+
+        def _ensure_parse_helpers(self):
+            if getattr(self, "_parse_helpers", None):
+                return self._parse_helpers
+            self._parse_helpers = {}
+            # __parse_i64(ptr) -> i64
+            t = self.enc.add_type([WasmEncoder.I32], [WasmEncoder.I64])
+            c = bytearray()
+            c += i32_const(0)
+            c += local_set(2)                     # neg
+            c += i32_const(0)
+            c += local_set(1)                     # i
+            c += local_get(0)
+            c += bytes([0x2D, 0x00, 0x00])        # s[0]
+            c += i32_const(45)                    # '-'
+            c += bytes([0x46])                    # eq
+            c += bytes([0x04, 0x40])
+            c += i32_const(1)
+            c += local_set(2)
+            c += i32_const(1)
+            c += local_set(1)
+            c += END
+            c += i64_const(0)
+            c += local_set(3)                     # acc
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(0)
+            c += local_get(1)
+            c += bytes([0x6A])
+            c += bytes([0x2D, 0x00, 0x00])        # c
+            c += local_set(4)
+            c += local_get(4)
+            c += i32_const(48)
+            c += bytes([0x6B])                    # c - '0'
+            c += local_set(4)
+            c += local_get(4)
+            c += i32_const(0)
+            c += bytes([0x48])                    # < 0
+            c += local_get(4)
+            c += i32_const(9)
+            c += bytes([0x4A])                    # > 9
+            c += bytes([0x72])                    # or
+            c += bytes([0x0D, 0x01])
+            c += local_get(3)
+            c += i64_const(10)
+            c += bytes([0x7E])
+            c += local_get(4)
+            c += bytes([0xAC])                    # i64.extend_i32_u
+            c += bytes([0x7C])
+            c += local_set(3)
+            c += local_get(1)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(1)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += local_get(2)
+            c += bytes([0x04, 0x40])
+            c += i64_const(0)
+            c += local_get(3)
+            c += bytes([0x7D])                    # i64.sub
+            c += local_set(3)
+            c += END
+            c += local_get(3)
+            self._parse_helpers["i64"] = self.enc.add_function(
+                t, [WasmEncoder.I32, WasmEncoder.I32, WasmEncoder.I64, WasmEncoder.I32], bytes(c))
+            # __parse_f64(ptr) -> f64
+            t = self.enc.add_type([WasmEncoder.I32], [WasmEncoder.F64])
+            c = bytearray()
+            c += i32_const(0)
+            c += local_set(2)                     # neg
+            c += i32_const(0)
+            c += local_set(3)                     # dot
+            c += i32_const(0)
+            c += local_set(1)                     # i
+            c += local_get(0)
+            c += bytes([0x2D, 0x00, 0x00])
+            c += i32_const(45)
+            c += bytes([0x46])
+            c += bytes([0x04, 0x40])
+            c += i32_const(1)
+            c += local_set(2)
+            c += i32_const(1)
+            c += local_set(1)
+            c += END
+            c += f64_const(0.0)
+            c += local_set(4)                     # val
+            c += f64_const(1.0)
+            c += local_set(5)                     # scale
+            c += BLOCK(BLK_VOID)
+            c += LOOP(BLK_VOID)
+            c += local_get(0)
+            c += local_get(1)
+            c += bytes([0x6A])
+            c += bytes([0x2D, 0x00, 0x00])
+            c += local_set(6)                     # c
+            c += local_get(6)
+            c += bytes([0x45])
+            c += bytes([0x0D, 0x01])
+            c += local_get(6)
+            c += i32_const(46)                    # '.'
+            c += bytes([0x46])
+            c += bytes([0x04, 0x40])
+            c += i32_const(1)
+            c += local_set(3)
+            c += local_get(1)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(1)
+            c += bytes([0x0C, 0x01])              # continue loop
+            c += END
+            c += local_get(6)
+            c += i32_const(48)
+            c += bytes([0x6B])
+            c += local_set(6)
+            c += local_get(6)
+            c += i32_const(0)
+            c += bytes([0x48])
+            c += local_get(6)
+            c += i32_const(9)
+            c += bytes([0x4A])
+            c += bytes([0x72])
+            c += bytes([0x0D, 0x01])
+            c += local_get(3)
+            c += bytes([0x04, 0x40])
+            c += local_get(5)
+            c += f64_const(10.0)
+            c += bytes([0xA2])                    # scale *= 10
+            c += local_set(5)
+            c += local_get(4)
+            c += local_get(6)
+            c += bytes([0xB7])                    # f64.convert_i32_s
+            c += local_get(5)
+            c += bytes([0xA3])                    # / scale
+            c += bytes([0xA0])                    # +
+            c += local_set(4)
+            c += bytes([0x05])
+            c += local_get(4)
+            c += f64_const(10.0)
+            c += bytes([0xA2])
+            c += local_get(6)
+            c += bytes([0xB7])
+            c += bytes([0xA0])
+            c += local_set(4)
+            c += END
+            c += local_get(1)
+            c += i32_const(1)
+            c += bytes([0x6A])
+            c += local_set(1)
+            c += bytes([0x0C, 0x00])
+            c += END
+            c += END
+            c += local_get(2)
+            c += bytes([0x04, 0x40])
+            c += f64_const(0.0)
+            c += local_get(4)
+            c += bytes([0xA1])                    # sub
+            c += local_set(4)
+            c += END
+            c += local_get(4)
+            self._parse_helpers["f64"] = self.enc.add_function(
+                t, [WasmEncoder.I32, WasmEncoder.I32, WasmEncoder.I32,
+                    WasmEncoder.F64, WasmEncoder.F64, WasmEncoder.I32], bytes(c))
+            return self._parse_helpers
+
+        def _str_ptr(self, text):
+            return self._intern_str(text)
+
+        def _gen_to_str(self, e, code, qname, prec=None):
+            ty = self._tc_type(e, qname)
+            helpers = self._ensure_str_helpers()
+            if isinstance(e, NilLit) or ty == ("p", "nil"):
+                code += i32_const(self._str_ptr("nil"))
+                return
+            if isinstance(e, BoolLit):
+                code += i32_const(self._str_ptr("true" if e.value else "false"))
+                return
+            if ty == FLOAT:
+                self._gen_expr(e, code, qname)
+                code += i32_const(6 if prec is None else prec)
+                code += CALL(helpers["f64"])
+                return
+            self._gen_expr(e, code, qname)
+            if ty in (INT, BOOL):
+                code += CALL(helpers["i64"])
+            elif ty == STR or ty == ("p", "bytes"):
+                pass
+            else:
+                _unsupported(f"interpolar un valor de tipo {ty} en f-string", e)
+
+        def _gen_fstring(self, e, code, qname):
+            raw = e.value
+            parts = []  # (kind, text/prec, expr)
+            buf = []
+            i = 0
+            n = len(raw)
+            while i < n:
+                c = raw[i]
+                if c == "{" and i + 1 < n and raw[i + 1] == "{":
+                    buf.append("{")
+                    i += 2
+                    continue
+                if c == "}" and i + 1 < n and raw[i + 1] == "}":
+                    buf.append("}")
+                    i += 2
+                    continue
+                if c == "{":
+                    if buf:
+                        parts.append(("lit", decode_escapes("".join(buf))))
+                        buf = []
+                    depth = 1
+                    j = i + 1
+                    quote = None
+                    while j < n and depth:
+                        ch = raw[j]
+                        if quote:
+                            if ch == "\\":
+                                j += 2
+                                continue
+                            if ch == quote:
+                                quote = None
+                        elif ch in ("'", '"'):
+                            quote = ch
+                        elif ch in "([{":
+                            depth += 1
+                        elif ch in ")]}":
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        j += 1
+                    if depth != 0:
+                        buf.append(c)
+                        i += 1
+                        continue
+                    inner = raw[i + 1:j]
+                    fmt = None
+                    # split format spec on the last top-level ':'
+                    d = 0
+                    q = None
+                    for k, ch in enumerate(inner):
+                        if q:
+                            if ch == "\\":
+                                continue
+                            if ch == q:
+                                q = None
+                        elif ch in ("'", '"'):
+                            q = ch
+                        elif ch in "([{":
+                            d += 1
+                        elif ch in ")]}":
+                            d -= 1
+                        elif ch == ":" and d == 0:
+                            fmt = inner[k + 1:]
+                            inner = inner[:k]
+                            break
+                    parts.append(("expr", fmt, inner.strip()))
+                    i = j + 1
+                    continue
+                buf.append(c)
+                i += 1
+            if buf:
+                parts.append(("lit", decode_escapes("".join(buf))))
+            if not parts:
+                code += i32_const(self._str_ptr(""))
+                return
+            acc = None
+            helpers = self._ensure_str_helpers()
+            from tools.parser import parse as _parse
+            from tools.nodes import ExprStmt as _ExprStmt
+            for part in parts:
+                if part[0] == "lit":
+                    ptr = self._str_ptr(part[1])
+                    code += i32_const(ptr)
+                else:
+                    fmt = part[1] or ""
+                    try:
+                        prog = _parse(part[2])
+                        ex = prog.stmts[0].expr
+                    except Exception:
+                        _unsupported(f"la expresion interpolada {part[2]!r}", e)
+                    prec = None
+                    import re as _re
+                    m = _re.fullmatch(r"\.(\d+)f", fmt)
+                    if m:
+                        prec = int(m.group(1))
+                    self._gen_to_str(ex, code, qname, prec)
+                if acc is not None:
+                    code += CALL(helpers["concat"])
+                acc = True
+            return
+
+        def _gen_set_literal(self, e, qname, code):
+            items = e.items or []
+            items = [a.value if isinstance(a, Arg) else a for a in items]
+            elem_ty = self._tc_type(e, qname)
+            elem_ty = elem_ty[1] if isinstance(elem_ty, tuple) and elem_ty[0] == "set" else UNKNOWN
+            is_float = (elem_ty == FLOAT)
+            is_ptr = not (elem_ty == INT or elem_ty == FLOAT or elem_ty == BOOL)
+            # Reuse the list layout (len, cap, data) and deduplicate on insert.
+            cap = len(items) if len(items) > 4 else 4
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_SET(self.tmp_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += i32_const(16)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.heap_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_SET(self.list_tmp_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += i32_const(cap * 8)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.heap_global)
+            # len = 0
+            code += GLOBAL_GET(self.tmp_global)
+            code += i32_const(0)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.tmp_global)
+            code += i32_const(cap)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(4)
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(8)
+            for val in items:
+                self._gen_expr(val, code, qname)
+                if is_float:
+                    code += GLOBAL_SET(self.list_val_f64)
+                elif is_ptr:
+                    code += bytes([0xAC])
+                    code += GLOBAL_SET(self.list_val_i64)
+                else:
+                    code += GLOBAL_SET(self.list_val_i64)
+                self._emit_set_insert(code, is_float)
+            code += GLOBAL_GET(self.tmp_global)
+
+        def _emit_set_insert(self, code, is_float):
+            # insert list_val into set pointer tmp_global if not already present
+            code += i32_const(0)
+            code += GLOBAL_SET(self.set_found_global)
+            code += i32_const(0)
+            code += GLOBAL_SET(self.list_idx_global)
+            code += BLOCK(BLK_VOID)
+            code += LOOP(BLK_VOID)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += bytes([0x48]); code += bytes([0x45])
+            code += bytes([0x0D, 0x01])
+            # compare existing
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            if is_float:
+                code += bytes([0x2B]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.list_val_f64)
+                code += F64_EQ
+            else:
+                code += bytes([0x29]); code += _uleb128_static(3); code += _uleb128_static(0)
+                code += GLOBAL_GET(self.list_val_i64)
+                code += I64_EQ
+            code += bytes([0x04, 0x40])
+            code += i32_const(1)
+            code += GLOBAL_SET(self.set_found_global)
+            code += bytes([0x0C, 0x02])  # br exit block (if=0, loop=1, block=2)
+            code += END
+            code += GLOBAL_GET(self.list_idx_global)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += GLOBAL_SET(self.list_idx_global)
+            code += bytes([0x0C, 0x00])
+            code += END
+            code += END
+            # append unless already present
+            code += GLOBAL_GET(self.set_found_global)
+            code += bytes([0x45])  # i32.eqz
+            code += bytes([0x04, 0x40])
+            code += GLOBAL_GET(self.list_tmp_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += i32_const(8)
+            code += bytes([0x6C])
+            code += bytes([0x6A])
+            if is_float:
+                code += GLOBAL_GET(self.list_val_f64)
+                code += bytes([0x39]); code += _uleb128_static(3); code += _uleb128_static(0)
+            else:
+                code += GLOBAL_GET(self.list_val_i64)
+                code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
+            code += GLOBAL_GET(self.tmp_global)
+            code += GLOBAL_GET(self.tmp_global)
+            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += i32_const(1)
+            code += bytes([0x6A])
+            code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
+            code += END
+
         def _gen_expr(self, e, code, qname):
+            # module-qualified access: `mod.fn(...)`, `mod.CONST`,
+            # `mod.Type(...)`, `mod.Type.Variant(...)`. The parser nests one
+            # Postfix wrapper per operation, so flatten the chain first.
+            if isinstance(e, Postfix):
+                chain, cur = [], e
+                while isinstance(cur, Postfix):
+                    chain.append(cur.ops or [])
+                    cur = cur.base
+                flat = [op for ops in reversed(chain) for op in ops]
+                if isinstance(cur, NameExpr) and flat and flat[0][0] == "field":
+                    qn = f"{cur.name}.{flat[0][1]}"
+                    known = (qn in self.func_index or qn in getattr(self, "module_globals", {})
+                             or qn in self.struct_layouts or qn in self.sum_types)
+                    if (known and cur.name in getattr(self.tc, "module_aliases", {})
+                            and flat[0][1].startswith("_")):
+                        known = False
+                    if known:
+                        rest = flat[1:]
+                        if not rest:
+                            return self._gen_expr(NameExpr(qn), code, qname)
+                        rebuilt = NameExpr(qn)
+                        for op in rest:
+                            rebuilt = Postfix(rebuilt, [op])
+                        return self._gen_expr(rebuilt, code, qname)
             if isinstance(e, IntLit):
                 code += i64_const(int(e.value))
             elif isinstance(e, FloatLit):
                 code += f64_const(float(e.value))
             elif isinstance(e, BoolLit):
                 code += i64_const(1 if e.value else 0)
-            elif isinstance(e, StrLit):
+            elif isinstance(e, FStrLit):
+                self._gen_fstring(e, code, qname)
+            elif isinstance(e, (StrLit, RStrLit, MlStrLit)):
                 ptr = self.str_offsets.get(id(e), 0)
                 code += i32_const(ptr)
+            elif isinstance(e, BytesLit):
+                ptr = self.str_offsets.get(id(e), 0)
+                code += i32_const(ptr)
+            elif isinstance(e, NilLit):
+                code += i64_const(0)
+            elif isinstance(e, SetExpr):
+                self._gen_set_literal(e, qname, code)
+            elif isinstance(e, ItExpr):
+                lmap = self.locals_map.get(qname, {})
+                if "it" in lmap:
+                    code += local_get(lmap["it"])
+                else:
+                    _unsupported("'it' fuera de una closure implicita", e)
             elif isinstance(e, SelfExpr):
                 code += local_get(0)
             elif isinstance(e, BorrowExpr):
                 self._gen_expr(e.operand, code, qname)
             elif isinstance(e, IfExpr):
                 cond = e.cond
-                self._gen_expr(cond, code, qname)
-                if isinstance(cond, FloatLit):
-                    code += f64_const(0.0)
-                    code += F64_NE
-                elif isinstance(cond, (NameExpr, BoolLit, IntLit)) or (isinstance(cond, BinOp) and cond.op in ("and", "or")) or (isinstance(cond, UnaryOp) and cond.op == "not"):
-                    code += i64_const(0)
-                    code += I64_NE
+                self._bool_cond(cond, code, qname)
                 then_ty = self._tc_type(e.then, qname)
                 wtype = self._wasm_type(then_ty) if then_ty is not None else WasmEncoder.I64
                 code += IF(wtype)
@@ -285,10 +1438,7 @@ class ExprMixin:
                 code += GLOBAL_GET(self.heap_global)
                 code += GLOBAL_SET(self.tmp_global)  # header
                 code += GLOBAL_GET(self.heap_global)
-                code += i32_const(16)
-                code += bytes([0x6A])
-                code += GLOBAL_GET(self.heap_global)
-                code += i32_const(cap * 16)
+                code += i32_const(16 + cap * 16)
                 code += bytes([0x6A])  # heap += 16 + cap*16
                 code += GLOBAL_SET(self.heap_global)
                 # store len
@@ -367,15 +1517,18 @@ class ExprMixin:
                     vty = self._tc_type(val, qname)
                     if vty == FLOAT:
                         code += bytes([0xBD])
-                    elif isinstance(vty, tuple) and vty[0] in ("named", "list", "tuple"):
+                    elif self._operand_is_ptr(val, qname):
                         code += bytes([0xAC])
                     code += bytes([0x37]); code += _uleb128_static(3); code += _uleb128_static(0)
                 code += GLOBAL_GET(self.tmp_global)
                 return
             elif isinstance(e, ListExpr):
+                items = e.items or []
                 elem_ty = self._elem_type(e, qname)
                 is_float = (elem_ty == FLOAT)
                 is_ptr = not (elem_ty == INT or elem_ty == FLOAT or elem_ty == BOOL)
+                n = len(items)
+                cap = n if n > 4 else 4
                 # header ptr = current heap
                 code += GLOBAL_GET(self.heap_global)
                 code += GLOBAL_SET(self.tmp_global)
@@ -441,8 +1594,12 @@ class ExprMixin:
                 if e.name == "e":
                     code += f64_const(2.718281828459045)
                     return
-                if e.name in self.locals_map[qname]:
-                    code += local_get(self.locals_map[qname][e.name])
+                lmap = self.locals_map.get(qname, {})
+                if e.name in lmap:
+                    code += local_get(lmap[e.name])
+                elif e.name in getattr(self, "module_globals", {}):
+                    idx, wtype, ty = self.module_globals[e.name]
+                    code += GLOBAL_GET(idx)
                 else:
                     # method field access without self.
                     field_info = None
@@ -488,45 +1645,35 @@ class ExprMixin:
                         code += bytes([0x0B])
                     else:
                         self._gen_expr(e.left, code, qname)
-                        if isinstance(e.left, (BinOp, Postfix, UnaryOp)):
-                            code += bytes([0xAC])
-                        code += I64_EQZ
-                        code += bytes([0x04, 0x40])  # if left==0
-                        self._gen_expr(e.right, code, qname)
-                        if isinstance(e.right, (BinOp, Postfix, UnaryOp)):
-                            code += bytes([0xAC])
-                        code += bytes([0x05])  # else
+                        code += i64_const(0)
+                        code += I64_NE
+                        code += IF(BLK_I64)
                         code += i64_const(1)
-                        code += bytes([0x0B])
+                        code += ELSE
+                        self._gen_expr(e.right, code, qname)
+                        code += END
                     return
                 if op == "and":
                     self._gen_expr(e.left, code, qname)
-                    if isinstance(e.left, (NameExpr, BoolLit, IntLit)):
-                        code += i64_const(0)
-                        code += I64_NE
-                    elif isinstance(e.left, FloatLit):
-                        code += f64_const(0.0)
-                        code += F64_NE
+                    code += i64_const(0)
+                    code += I64_NE
                     code += IF(BLK_I64)
                     self._gen_expr(e.right, code, qname)
-                    if isinstance(e.right, (NameExpr, BoolLit, IntLit)):
-                        code += i64_const(0)
-                        code += I64_NE
-                        code += bytes([0xAC])  # i64.extend_i32_u (bool i32 -> i64)
-                    elif isinstance(e.right, FloatLit):
-                        code += f64_const(0.0)
-                        code += F64_NE
-                        code += bytes([0xAC])
-                    else:
-                        # right is comparison (i32) -> i64
-                        code += bytes([0xAC])
                     code += ELSE
                     code += i64_const(0)
                     code += END
                     return
+                if op == "in":
+                    self._gen_contains(e.left, e.right, code, qname)
+                    code += bytes([0xAD])
+                    return
                 f = self._is_float(e, qname)
                 self._gen_expr(e.left, code, qname)
+                if not f and self._operand_is_ptr(e.left, qname):
+                    code += bytes([0xAC])
                 self._gen_expr(e.right, code, qname)
+                if not f and self._operand_is_ptr(e.right, qname):
+                    code += bytes([0xAC])
                 op = e.op
                 if f:
                     if op == "+":
@@ -539,16 +1686,22 @@ class ExprMixin:
                         code += F64_DIV
                     elif op == "<=":
                         code += F64_LE
+                        code += bytes([0xAD])
                     elif op == ">=":
                         code += F64_GE
+                        code += bytes([0xAD])
                     elif op == "<":
                         code += F64_LT
+                        code += bytes([0xAD])
                     elif op == ">":
                         code += F64_GT
+                        code += bytes([0xAD])
                     elif op == "==":
                         code += F64_EQ
+                        code += bytes([0xAD])
                     elif op == "!=":
                         code += F64_NE
+                        code += bytes([0xAD])
                     else:
                         _unsupported(f"el operador binario '{op}' (float)", e)
                 else:
@@ -564,16 +1717,42 @@ class ExprMixin:
                         code += I64_REM_S
                     elif op == "<=":
                         code += I64_LE_S
+                        code += bytes([0xAD])
                     elif op == ">=":
                         code += I64_GE_S
+                        code += bytes([0xAD])
                     elif op == "<":
                         code += I64_LT_S
+                        code += bytes([0xAD])
                     elif op == ">":
                         code += I64_GT_S
+                        code += bytes([0xAD])
                     elif op == "==":
                         code += I64_EQ
+                        code += bytes([0xAD])
                     elif op == "!=":
                         code += I64_NE
+                        code += bytes([0xAD])
+                    elif op in ("is", "is not"):
+                        # identity: values are integers/pointers in v0.1
+                        code += I64_EQ
+                        if op == "is not":
+                            code += bytes([0x45])
+                        code += bytes([0xAD])
+                    elif op == "&":
+                        code += bytes([0x83])
+                    elif op == "|":
+                        code += bytes([0x84])
+                    elif op == "^":
+                        code += bytes([0x85])
+                    elif op == "<<":
+                        code += bytes([0x86])
+                    elif op == ">>":
+                        code += bytes([0x87])
+                    elif op == "**":
+                        code += CALL(self._ensure_pow_helper())
+                    elif op == "//":
+                        code += I64_DIV_S
                     else:
                         _unsupported(f"el operador binario '{op}'", e)
             elif isinstance(e, UnaryOp):
@@ -596,24 +1775,18 @@ class ExprMixin:
                     code += i64_const(0)
                     code += RETURN
                     code += bytes([0x0B])  # end if
+                elif e.op == "~":
+                    self._gen_expr(e.operand, code, qname)
+                    code += i64_const(-1)
+                    code += bytes([0x85])  # i64.xor
                 elif e.op == "not":
                     self._gen_expr(e.operand, code, qname)
-                    if isinstance(e.operand, (NameExpr, BoolLit, IntLit)):
-                        code += i64_const(0)
-                        code += I64_EQ
-                        code += bytes([0xAC])
-                    elif isinstance(e.operand, FloatLit):
+                    if self._tc_type(e.operand, qname) == FLOAT:
                         code += f64_const(0.0)
                         code += F64_EQ
-                        code += bytes([0xAC])
-                    elif isinstance(e.operand, (BinOp, Postfix, UnaryOp)):
-                        code += bytes([0xAC])
-                        code += i64_const(0)
-                        code += I64_EQ
-                        code += bytes([0xAC])
                     else:
                         code += I64_EQZ
-                        code += bytes([0xAC])
+                    code += bytes([0xAD])
                 else:
                     _unsupported(f"el operador unario '{e.op}'", e)
             elif isinstance(e, Postfix):
@@ -895,12 +2068,34 @@ class ExprMixin:
                             if is_ptr:
                                 code += bytes([0xA7])  # i32.wrap_i64
                         return
+                # tuple field access: t.0, t.1, ...
+                if ((not (e.ops and e.ops[-1][0] == "call")) and e.ops
+                        and e.ops[0][0] == "field" and isinstance(e.ops[0][1], int)):
+                    tup_ty = self._tc_type(e.base, qname)
+                    if isinstance(tup_ty, tuple) and tup_ty[0] == "borrow":
+                        tup_ty = tup_ty[1]
+                    if isinstance(tup_ty, tuple) and tup_ty[0] == "tuple":
+                        idx = e.ops[0][1]
+                        _size, fields = self._tuple_layout(tup_ty)
+                        if 0 <= idx < len(fields):
+                            wtype, off, _ty = fields[idx]
+                            self._gen_expr(e.base, code, qname)
+                            if wtype == WasmEncoder.F64:
+                                code += bytes([0x2B])
+                            elif wtype == WasmEncoder.I32:
+                                code += bytes([0x28])
+                            else:
+                                code += bytes([0x29])
+                            # alignment is log2(natural size): f64/i64 -> 3, i32 -> 2
+                            code += _uleb128_static(2 if wtype == WasmEncoder.I32 else 3)
+                            code += _uleb128_static(off)
+                            return
                 # list field access: .len
                 if (not (e.ops and e.ops[-1][0] == "call")) and e.ops and e.ops[0][0] == "field":
                     base_ty = self._tc_type(e.base, qname)
                     if isinstance(base_ty, tuple) and base_ty[0] == "borrow":
                         base_ty = base_ty[1]
-                    if isinstance(base_ty, tuple) and base_ty[0] == "list" and e.ops[0][1] == "len":
+                    if isinstance(base_ty, tuple) and base_ty[0] in ("list", "set", "map") and e.ops[0][1] == "len":
                         self._gen_expr(e.base, code, qname)
                         code += bytes([0x28])  # i32.load len
                         code += _uleb128_static(2)
@@ -1042,8 +2237,7 @@ class ExprMixin:
                         code += i32_const(1)
                         code += bytes([0x6A])
                         code += bytes([0x36]); code += _uleb128_static(2); code += _uleb128_static(0)
-                        # result void (drop) -> push returns nil? Minim push returns nil. Leave 0.
-                        code += i64_const(0)
+                        # push returns nil: leave nothing on the stack
                         return
 
                 # handle calls
@@ -1171,6 +2365,15 @@ class ExprMixin:
                 if isinstance(e.base, Postfix) and e.base.ops and e.base.ops[-1][0] == "field" and e.ops and e.ops[-1][0] == "call":
                     callee_name = e.base.ops[-1][1]
                     base_ty = self._tc_type(e.base.base, qname)
+                    if base_ty == STR and callee_name == "contains":
+                        args = e.ops[-1][1] or []
+                        arg = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
+                        if arg is not None:
+                            self._gen_contains(arg, e.base.base, code, qname)
+                            code += bytes([0xAD])  # i64.extend_i32_s
+                        else:
+                            code += i64_const(0)
+                        return
                     if base_ty == STR and callee_name in ("len", "upper", "lower"):
                         if callee_name == "len":
                             self._gen_expr(e.base.base, code, qname)
@@ -1297,6 +2500,59 @@ class ExprMixin:
                             code += bytes([0x3A, 0x00, 0x00])
                             code += GLOBAL_GET(self.tmp_global)
                             return
+                # set / map methods
+                if (isinstance(e.base, Postfix) and e.base.ops
+                        and e.base.ops[-1][0] == "field" and e.ops and e.ops[-1][0] == "call"):
+                    recv = e.base.base
+                    method = e.base.ops[-1][1]
+                    rty = self._tc_type(recv, qname)
+                    if isinstance(rty, tuple) and rty[0] == "borrow":
+                        rty = rty[1]
+                    args = e.ops[-1][1] or []
+                    arg = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
+                    if isinstance(rty, tuple) and rty[0] == "list" and method in ("map", "filter", "len"):
+                        if method == "len":
+                            self._gen_expr(recv, code, qname)
+                            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                            code += bytes([0xAC])
+                            return
+                        self._gen_list_map(code, qname, recv, arg, rty, method)
+                        return
+                    if isinstance(rty, tuple) and rty[0] == "set" and method in ("add", "push", "contains", "len"):
+                        if method == "len":
+                            self._gen_expr(recv, code, qname)
+                            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                            code += bytes([0xAC])
+                            return
+                        if method == "contains":
+                            self._gen_contains(arg, recv, code, qname)
+                            code += bytes([0xAD])
+                            return
+                        elem_ty = rty[1] if len(rty) > 1 else UNKNOWN
+                        is_float = (elem_ty == FLOAT)
+                        self._gen_expr(arg, code, qname)
+                        if is_float:
+                            code += GLOBAL_SET(self.list_val_f64)
+                        else:
+                            if self._operand_is_ptr(arg, qname):
+                                code += bytes([0xAC])
+                            code += GLOBAL_SET(self.list_val_i64)
+                        self._gen_expr(recv, code, qname)
+                        code += GLOBAL_SET(self.tmp_global)
+                        self._emit_set_insert(code, is_float)
+                        return
+                    if isinstance(rty, tuple) and rty[0] == "map" and method in ("len", "has", "get"):
+                        if method == "len":
+                            self._gen_expr(recv, code, qname)
+                            code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                            code += bytes([0xAC])
+                            return
+                        if method == "has":
+                            self._gen_contains(arg, recv, code, qname)
+                            code += bytes([0xAD])
+                            return
+                        self._gen_expr(Postfix(recv, [("index", arg)]), code, qname)
+                        return
                 # method call: base is <recv>.method, then call
                 if isinstance(e.base, Postfix) and e.base.ops and e.base.ops[-1][0] == "field" and e.ops and e.ops[-1][0] == "call":
                     callee_name = e.base.ops[-1][1]
@@ -1330,7 +2586,85 @@ class ExprMixin:
                 if isinstance(e.base, NameExpr) and e.ops and e.ops[-1][0] == "call":
                     callee_name = e.base.name
                     args = e.ops[-1][1] or []
+                    if callee_name in ("str", "int", "float", "len", "min", "max", "abs", "copy"):
+                        arg = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
+                        if arg is None:
+                            code += i64_const(0)
+                            return
+                        aty = self._tc_type(arg, qname)
+                        if isinstance(aty, tuple) and aty[0] == "borrow":
+                            aty = aty[1]
+                        if callee_name == "str":
+                            self._gen_to_str(arg, code, qname)
+                        elif callee_name == "int":
+                            if aty == STR:
+                                self._gen_expr(arg, code, qname)
+                                code += CALL(self._ensure_parse_helpers()["i64"])
+                            else:
+                                self._gen_expr(arg, code, qname)
+                                if aty == FLOAT:
+                                    code += bytes([0xB0])  # i64.trunc_f64_s
+                        elif callee_name == "float":
+                            if aty == STR:
+                                self._gen_expr(arg, code, qname)
+                                code += CALL(self._ensure_parse_helpers()["f64"])
+                            else:
+                                self._gen_expr(arg, code, qname)
+                                if aty != FLOAT:
+                                    code += bytes([0xB9])  # f64.convert_i64_s
+                        elif callee_name == "len":
+                            if aty == STR or aty == BYTES:
+                                self._gen_expr(arg, code, qname)
+                                code += CALL(self._ensure_str_helpers()["len"])
+                                code += bytes([0xAC])
+                            elif isinstance(aty, tuple) and aty[0] == "tuple":
+                                code += i64_const(len(aty[1]))
+                            else:
+                                self._gen_expr(arg, code, qname)
+                                code += bytes([0x28]); code += _uleb128_static(2); code += _uleb128_static(0)
+                                code += bytes([0xAC])
+                        elif callee_name == "abs":
+                            self._gen_expr(arg, code, qname)
+                            if aty == FLOAT:
+                                code += bytes([0x99])  # f64.abs
+                            else:
+                                code += i64_const(0)
+                                code += bytes([0x53])  # lt_s
+                                code += bytes([0x04, WasmEncoder.I64])
+                                code += i64_const(0)
+                                self._gen_expr(arg, code, qname)
+                                code += bytes([0x7D])  # sub
+                                code += bytes([0x05])
+                                self._gen_expr(arg, code, qname)
+                                code += END
+                        else:  # min / max
+                            arg2 = args[1].value if (len(args) > 1 and isinstance(args[1], Arg)) else (args[1] if len(args) > 1 else None)
+                            if aty == FLOAT:
+                                self._gen_expr(arg, code, qname)
+                                code += GLOBAL_SET(self.list_val_f64)
+                                self._gen_expr(arg2, code, qname)
+                                code += GLOBAL_SET(self.match_scrut_f64)
+                                code += GLOBAL_GET(self.list_val_f64)
+                                code += GLOBAL_GET(self.match_scrut_f64)
+                                code += GLOBAL_GET(self.list_val_f64)
+                                code += GLOBAL_GET(self.match_scrut_f64)
+                                code += F64_LT if callee_name == "min" else F64_GT
+                                code += bytes([0x1B])  # select
+                            else:
+                                self._gen_expr(arg, code, qname)
+                                code += GLOBAL_SET(self.list_val_i64)
+                                self._gen_expr(arg2, code, qname)
+                                code += GLOBAL_SET(self.err_code_global)
+                                code += GLOBAL_GET(self.list_val_i64)
+                                code += GLOBAL_GET(self.err_code_global)
+                                code += GLOBAL_GET(self.list_val_i64)
+                                code += GLOBAL_GET(self.err_code_global)
+                                code += bytes([0x53]) if callee_name == "min" else bytes([0x55])
+                                code += bytes([0x1B])  # select
+                        return
                     lv = self.lambda_vars.get(qname, {}).get(callee_name)
+                    if lv is None:
+                        lv = self.lambda_vars.get(None, {}).get(callee_name)
                     if lv is not None:
                         lname, captured = lv
                         # pass captured vars first
@@ -1365,7 +2699,9 @@ class ExprMixin:
                     if callee_name == "print":
                         arg_expr = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
                         arg_ty = self._tc_type(arg_expr, qname) if arg_expr is not None else None
-                        if isinstance(arg_expr, StrLit) or arg_ty == STR:
+                        if (isinstance(arg_expr, (StrLit, RStrLit, MlStrLit, BytesLit, FStrLit))
+                                or arg_ty == STR
+                                or (isinstance(arg_ty, tuple) and arg_ty[0] == "p" and arg_ty[1] == "bytes")):
                             code += CALL(self.print_str_import)
                         elif args and self._is_float(arg_expr, qname):
                             code += CALL(self.print_f64_import)

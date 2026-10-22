@@ -1,5 +1,6 @@
-from tools.typecheck import FLOAT, INT, BOOL, UNKNOWN, STR
+from tools.typecheck import FLOAT, INT, BOOL, UNKNOWN, STR, NIL
 from tools.nodes import *
+from .util import _unsupported
 from tools.wasm_encoder import *
 from tools.wasm_encoder import _uleb128_static
 
@@ -218,7 +219,7 @@ class MatchMixin:
                         self._gen_bind_pattern(sub, fty, off, code, qname)
                 return
 
-        def _gen_match_core(self, scrut_expr, arms, code, qname, fn):
+        def _gen_match_core(self, scrut_expr, arms, code, qname, fn, want_value=True):
             scrut_ty = self._tc_type(scrut_expr, qname)
             is_float_scrut = (scrut_ty == FLOAT)
             self._gen_expr(scrut_expr, code, qname)
@@ -241,8 +242,11 @@ class MatchMixin:
                 self.tc.cur_type = old
             except Exception:
                 match_ty = None
-            wtype = self._wasm_type(match_ty) if match_ty is not None else WasmEncoder.I64
-            code += BLOCK(wtype)
+            if want_value:
+                wtype = self._wasm_type(match_ty) if match_ty is not None else WasmEncoder.I64
+            else:
+                wtype = None
+            code += BLOCK(wtype if wtype is not None else BLK_VOID)
             sum_name = None
             if isinstance(scrut_ty, tuple) and scrut_ty[0] == "named":
                 sum_name = scrut_ty[1]
@@ -328,16 +332,18 @@ class MatchMixin:
                 # guard
                 if arm.guard is not None:
                     self._gen_expr(arm.guard, code, qname)
-                    if isinstance(arm.guard, (NameExpr, BoolLit)):
-                        code += bytes([0x50])
-                    else:
-                        code += bytes([0x45])
+                    code += i64_const(0)
+                    code += I64_EQ
                     code += bytes([0x0D, 0x00])
                 # body
                 if isinstance(arm.body, Suite):
-                    self._gen_suite(arm.body, code, qname, fn, True)
+                    self._gen_suite(arm.body, code, qname, fn, want_value)
                 elif arm.body is not None:
                     self._gen_expr(arm.body, code, qname)
+                    if not want_value:
+                        ty = self._tc_type(arm.body, qname)
+                        if ty != NIL:
+                            code += DROP
                 code += bytes([0x0C, 0x01])
                 code += bytes([0x0B])
             # else arms
@@ -345,17 +351,22 @@ class MatchMixin:
                 if not getattr(arm, "is_else", False):
                     continue
                 if isinstance(arm.body, Suite):
-                    self._gen_suite(arm.body, code, qname, fn, True)
+                    self._gen_suite(arm.body, code, qname, fn, want_value)
                 elif arm.body is not None:
                     self._gen_expr(arm.body, code, qname)
-                code += bytes([0x0C, 0x01])
+                    if not want_value:
+                        ty = self._tc_type(arm.body, qname)
+                        if ty != NIL:
+                            code += DROP
+                code += bytes([0x0C, 0x00])
             # default
-            if wtype == WasmEncoder.F64:
-                code += f64_const(0.0)
-            elif wtype == WasmEncoder.I32:
-                code += i32_const(0)
-            else:
-                code += i64_const(0)
+            if want_value:
+                if wtype == WasmEncoder.F64:
+                    code += f64_const(0.0)
+                elif wtype == WasmEncoder.I32:
+                    code += i32_const(0)
+                else:
+                    code += i64_const(0)
             code += bytes([0x0B])
 
         def _collect_pattern_binding_types(self, pat, scrut_ty, result):

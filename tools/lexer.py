@@ -35,6 +35,47 @@ class LexerError(Exception):
     pass
 
 
+_ESCAPES = {
+    "n": "\n", "t": "\t", "r": "\r", "0": "\0", "\\": "\\",
+    "\"": "\"", "'": "'", "a": "\a", "b": "\b", "f": "\f", "v": "\v",
+}
+
+
+def decode_escapes(text):
+    """Decode the escape sequences shared by str/bytes/f-string literals."""
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c != "\\" or i + 1 >= n:
+            out.append(c)
+            i += 1
+            continue
+        nxt = text[i + 1]
+        if nxt in _ESCAPES:
+            out.append(_ESCAPES[nxt])
+            i += 2
+        elif nxt == "x" and i + 3 < n:
+            try:
+                out.append(chr(int(text[i + 2:i + 4], 16)))
+                i += 4
+            except ValueError:
+                out.append(c)
+                i += 1
+        elif nxt == "u" and i + 5 < n:
+            try:
+                out.append(chr(int(text[i + 2:i + 6], 16)))
+                i += 6
+            except ValueError:
+                out.append(c)
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def tokenize(source):
     tokens = []
     lines = source.split("\n")
@@ -223,7 +264,7 @@ def tokenize(source):
                     buf += src[i]
                     i += 1
                     col_no += 1
-            emit("MLSTR", buf, ln, cl)
+            emit("MLSTR", decode_escapes(buf), ln, cl)
             continue
 
         # Raw string r"..." or r'...'
@@ -260,7 +301,7 @@ def tokenize(source):
             if i < L:
                 i += 1
                 col_no += 1
-            emit("BYTES", buf, ln, cl)
+            emit("BYTES", decode_escapes(buf), ln, cl)
             continue
 
         # f-string f"..."
@@ -303,13 +344,31 @@ def tokenize(source):
             if i < L and src[i] == quote:
                 i += 1
                 col_no += 1
-            emit("STR", buf, ln, cl)
+            emit("STR", decode_escapes(buf), ln, cl)
             continue
 
         # Numbers
         if c.isdigit():
             start_i = i
             start_col = col_no
+            # 0x / 0b / 0o prefixed integers (docs/DESIGN.md 1.5)
+            if c == "0" and i + 1 < L and src[i+1] in ("x", "X", "b", "B", "o", "O"):
+                base_ch = src[i+1].lower()
+                base = {"x": 16, "b": 2, "o": 8}[base_ch]
+                i += 2
+                col_no += 2
+                digits = ""
+                while i < L and (src[i].isalnum() or src[i] == "_"):
+                    digits += src[i]
+                    i += 1
+                    col_no += 1
+                clean = digits.replace("_", "")
+                try:
+                    value = int(clean, base)
+                except ValueError:
+                    raise LexerError(f"Invalid integer literal at {ln}:{start_col}")
+                emit("INT", str(value), ln, start_col)
+                continue
             buf = ""
             is_float = False
             dot_count = 0

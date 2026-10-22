@@ -6,6 +6,9 @@ from tools.resolve import Resolver, Symbol, SymKind
 
 INT=("p","int"); FLOAT=("p","float"); BOOL=("p","bool"); STR=("p","str")
 NIL=("p","nil"); UNKNOWN=("u",); ERRT=("err",); BYTES=("p","bytes")
+# Explicit widths are accepted as spellings of the default machine types.
+INT_WIDTHS={"i8","i16","i32","i64","u8","u16","u32","u64"}
+FLOAT_WIDTHS={"f32","f64"}
 def L(t): return ("list",t)
 def M(k,v): return ("map",k,v)
 def O(t): return ("opt",t)
@@ -71,6 +74,7 @@ class TC:
         for e in res_errs:
             self.errors.append(TypeCheckError(str(e),getattr(e,"node",None)))
         self.type_defs={s.name:s for s in program.stmts if isinstance(s,TypeDecl)}
+        self.module_aliases=dict(getattr(program,"merged_modules",{}))
         self.cur_type=None; self.cur_func=None; self.tvs=set(); self.mono=set()
         self._register()
     def err(self,msg,node=None): self.errors.append(TypeCheckError(msg,node))
@@ -114,6 +118,10 @@ class TC:
         if isinstance(t,TypeName) and t.name in ("int","float","bool","str","bytes","nil"):
             _pm={"int":INT,"float":FLOAT,"bool":BOOL,"str":STR,"bytes":BYTES,"nil":NIL}
             return _pm[t.name]
+        if isinstance(t,TypeName) and t.name in INT_WIDTHS:
+            return INT
+        if isinstance(t,TypeName) and t.name in FLOAT_WIDTHS:
+            return FLOAT
         if isinstance(t,TypeName):
             if t.name in self.tvs: return V(t.name)
             return N(t.name,[self._atype(a) for a in (t.args or [])])
@@ -460,8 +468,26 @@ class TC:
     def field(self,base,name,node):
         bt=base
         if bt[0]=="borrow": bt=bt[1]
+        if bt[0]=="tuple":
+            try: i=int(name)
+            except (TypeError,ValueError): i=-1
+            if 0 <= i < len(bt[1]): return bt[1][i]
+            self.err(f"tuple index out of range: {name}",node); return UNKNOWN
         if bt[0]=="module":
             mod=bt[1]; bn=f"{mod}.{name}"
+            if mod in self.module_aliases:
+                if name.startswith("_"):
+                    self.err(f"{name!r} is private to module {mod!r}",node)
+                    return UNKNOWN
+                sym=self.module_scope.lookup(bn)
+                if sym is not None:
+                    if getattr(sym,"ty",None) is not None: return sym.ty
+                    if isinstance(sym.node,FnDecl):
+                        fs=self.resolver.func_scopes.get(id(sym.node)) or self.module_scope
+                        self._func(sym.node,fs,None)
+                        if getattr(sym,"ty",None) is not None: return sym.ty
+                    if sym.kind==SymKind.TYPE: return N(bn,())
+                return UNKNOWN
             if mod=="fs":
                 if name=="read": return F((STR,),R(STR),(),bn)
                 if name=="write": return F((STR,STR),R(NIL),(),bn)
@@ -603,6 +629,7 @@ class TC:
             if name in ("len",): return F((UNKNOWN,),INT,(),"len")
             if name in ("err",): return F((STR,INT),ERRT,(),"err",(False,True))
             if name in ("fs","env","io","net","json","time","rand","math","os","task","rc","arc"): return ("module",name)
+            if name in self.module_aliases: return ("module",name)
             if name in self.type_defs or name in ("int","float","bool","str","bytes","nil","map","set","list"):
                 return N(name,())
             sym=self._lookup(scope,name)
@@ -659,10 +686,18 @@ class TC:
             for t in vals[1:]:
                 if not compat(t,vt): vt=UNKNOWN
             return M(kt,vt)
+        if isinstance(e,SetExpr):
+            its=[self.expr(a.value if isinstance(a,Arg) else a,scope) for a in (e.items or [])]
+            if not its: return ("set",UNKNOWN)
+            ct=its[0]
+            for t in its[1:]:
+                if not compat(t,ct): ct=UNKNOWN
+            return ("set",ct)
         if isinstance(e,Lambda):
             ls=scope.child("block"); pts=[]
+            hint=getattr(e,"_it_hint",None)
             for p in e.params:
-                pt=self._atype(p.type_) if p.type_ is not None else UNKNOWN
+                pt=self._atype(p.type_) if p.type_ is not None else (hint if hint is not None else UNKNOWN)
                 pts.append(pt)
                 sym=ls.lookup(p.name) if hasattr(ls,"lookup") else None
                 if sym is None:
@@ -818,6 +853,10 @@ class TC:
                 t=self.expr(expr,cs)
                 arg_types.append(F((elem,),t,(),None))
             else:
+                if (isinstance(expr, Lambda) and isinstance(pt, tuple) and pt[0] == "func"
+                        and pt[1] and expr.params and expr.params[0].type_ is None):
+                    # implicit `it` closure: inherit the expected element type
+                    expr._it_hint = pt[1][0]
                 arg_types.append(self.expr(expr,scope))
         if base[0]=="named": return self.ctor(base,args,arg_types,scope,node)
         if base[0]!="func":

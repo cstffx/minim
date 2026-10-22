@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tools.lexer import LexerError
 from tools.parser import parse, ParseError
 from tools.core_ir import elaborate
+from tools.modules import load_modules, ModuleError
 from tools.resolve import ResolveError
 from tools.typecheck import TC
 from tools.codegen import WasmCodegen, CodegenError
@@ -33,7 +34,7 @@ class CompileFailure(Exception):
         super().__init__(f"{stage}: {len(errors)} error(s)")
 
 
-def compile_pipeline(source, want_wasm):
+def compile_pipeline(source, want_wasm, filename=None):
     """Run every stage up through typecheck + borrow check.
 
     Returns (program, tc) on success. Raises CompileFailure on the first
@@ -43,6 +44,12 @@ def compile_pipeline(source, want_wasm):
         program = parse(source)
     except (LexerError, ParseError) as e:
         raise CompileFailure("parse", [str(e)])
+
+    try:
+        base = os.path.dirname(os.path.abspath(filename)) if filename else os.getcwd()
+        load_modules(program, base)
+    except ModuleError as e:
+        raise CompileFailure("modules", [str(e)])
 
     try:
         elaborate(program)
@@ -64,7 +71,7 @@ def compile_pipeline(source, want_wasm):
 def cmd_check(args):
     source = open(args.file).read()
     try:
-        compile_pipeline(source, want_wasm=False)
+        compile_pipeline(source, want_wasm=False, filename=args.file)
     except CompileFailure as f:
         _report(args.file, f)
         return 1
@@ -75,7 +82,7 @@ def cmd_check(args):
 def cmd_build(args):
     source = open(args.file).read()
     try:
-        program, tc = compile_pipeline(source, want_wasm=True)
+        program, tc = compile_pipeline(source, want_wasm=True, filename=args.file)
         cg = WasmCodegen(program, tc)
         wasm_bytes = cg.generate()
     except CompileFailure as f:
@@ -129,7 +136,8 @@ def cmd_run(args):
         "const env={"
         "print:(x)=>process.stdout.write(String(x)),"
         "print_f64:(x)=>process.stdout.write(String(x)),"
-        "print_str:(ptr,len)=>{const b=new Uint8Array(mem.buffer,ptr,len);process.stdout.write(Buffer.from(b).toString())}"
+        "print_str:(ptr)=>{let e=ptr;while(new Uint8Array(mem.buffer)[e])e++;"
+        "const b=new Uint8Array(mem.buffer,ptr,e-ptr);process.stdout.write(Buffer.from(b).toString())}"
         "};"
         "const i=new WebAssembly.Instance(m,{env,env});"
         "if(i.exports._start)i.exports._start();"
@@ -162,7 +170,7 @@ def main(argv=None):
     p_check.set_defaults(func=cmd_check)
 
     p_index = sub.add_parser("index", help="run signature indexer")
-    p_index.add_argument("args", nargs="*")
+    p_index.add_argument("args", nargs=argparse.REMAINDER)
     p_index.set_defaults(func=cmd_index)
 
     p_test = sub.add_parser("test", help="run test suite")

@@ -88,6 +88,9 @@ class Resolver:
         self.type_scopes = {}   # id(TypeDecl) -> Scope
         self.func_scopes = {}   # id(FnDecl) -> Scope
         self._add_prelude()
+        # user modules merged by tools/modules.py are addressed as `alias.name`
+        for alias in getattr(program, "merged_modules", {}):
+            self.module_scope.define(Symbol(alias, SymKind.TYPE, None, self.module_scope))
 
     def _add_prelude(self):
         # Functions
@@ -472,7 +475,8 @@ class Resolver:
 
     def _resolve_type(self, typ, scope):
         if isinstance(typ, TypeName):
-            if typ.name not in ("int", "float", "bool", "str", "bytes", "nil", "map", "set", "self", "Self"):
+            if typ.name not in ("int", "float", "bool", "str", "bytes", "nil", "map", "set", "self", "Self",
+                                "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"):
                 sym = self._lookup(typ.name, scope)
                 if sym is None:
                     self.errors.append(ResolveError(f"unbound type {typ.name!r}", typ))

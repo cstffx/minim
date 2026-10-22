@@ -73,6 +73,44 @@ def desugar_for_stmt(st):
 
 _CMP_OPS = {"<", "<=", ">", ">=", "==", "!="}
 
+def _contains_it(e):
+    if isinstance(e, ItExpr):
+        return True
+    if isinstance(e, Lambda):
+        return False
+    if isinstance(e, BinOp):
+        return _contains_it(e.left) or _contains_it(e.right)
+    if isinstance(e, UnaryOp):
+        return _contains_it(e.operand)
+    if isinstance(e, Postfix):
+        if _contains_it(e.base):
+            return True
+        for op in (e.ops or []):
+            if op[0] == "call":
+                for a in (op[1] or []):
+                    if _contains_it(a.value if isinstance(a, Arg) else a):
+                        return True
+            elif op[0] in ("index", "slice"):
+                for part in op[1:]:
+                    if part is not None and not isinstance(part, str) and _contains_it(part):
+                        return True
+    if isinstance(e, IfExpr):
+        return _contains_it(e.cond) or _contains_it(e.then) or _contains_it(e.else_)
+    if isinstance(e, (TupleExpr, ListExpr, MapExpr, SetExpr)):
+        for a in (e.items or []):
+            if _contains_it(a.value if isinstance(a, Arg) else a):
+                return True
+    if isinstance(e, MatchExpr):
+        if _contains_it(e.expr):
+            return True
+        for arm in (e.arms or []):
+            if arm.guard is not None and _contains_it(arm.guard):
+                return True
+            if arm.body is not None and not isinstance(arm.body, Suite) and _contains_it(arm.body):
+                return True
+    return False
+
+
 def _desugar_expr(e):
     if isinstance(e, BinOp):
         left = _desugar_expr(e.left)
@@ -98,7 +136,10 @@ def _desugar_expr(e):
                 args = []
                 for a in (op[1] or []):
                     val = a.value if isinstance(a, Arg) else a
-                    args.append(Arg(a.label, _desugar_expr(val), a.is_named, a.span) if isinstance(a, Arg) else _desugar_expr(val))
+                    nv = _desugar_expr(val)
+                    if isinstance(a, Arg) and not a.is_named and _contains_it(nv):
+                        nv = Lambda([Param(None, "it", None, None)], nv)
+                    args.append(Arg(a.label, nv, a.is_named, a.span) if isinstance(a, Arg) else nv)
                 ops.append((op[0], args))
             elif op[0] in ("index", "slice"):
                 idx = op[1]
@@ -123,7 +164,7 @@ def _desugar_expr(e):
         return MatchExpr(_desugar_expr(e.expr), arms, e.one_line, e.span)
     if isinstance(e, LetStmt) if False else False:
         pass
-    if isinstance(e, (TupleExpr, ListExpr, MapExpr)):
+    if isinstance(e, (TupleExpr, ListExpr, MapExpr, SetExpr)):
         items = []
         for a in (getattr(e, "items", None) or []):
             val = a.value if isinstance(a, Arg) else a
@@ -136,11 +177,13 @@ def _desugar_expr(e):
             return TupleExpr(items, e.span)
         if isinstance(e, ListExpr):
             return ListExpr(items, e.span)
+        if isinstance(e, SetExpr):
+            return SetExpr(items, e.span)
         return MapExpr(items, e.span)
     return e
 
 def _desugar_stmt_exprs(st):
-    if isinstance(st, (LetStmt, VarStmt)):
+    if isinstance(st, (LetStmt, VarStmt, LetDecl, VarDecl)):
         st.value = _desugar_expr(st.value)
     elif isinstance(st, Assign):
         st.value = _desugar_expr(st.value)

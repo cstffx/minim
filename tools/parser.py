@@ -795,7 +795,11 @@ class Parser:
                 base = A.UnaryOp("?", base)
             elif self.peek().type == ".":
                 self.advance()
-                name = self.expect("NAME").value
+                if self.peek().type == "INT":
+                    # tuple field: t.0, t.1
+                    name = int(self.advance().value)
+                else:
+                    name = self.expect("NAME").value
                 # type args? [ ... ] — handle as part of name for generics in calls
                 # We'll attach as a special op
                 base = A.Postfix(base, [("field", name)])
@@ -937,6 +941,9 @@ class Parser:
             if self.peek().type != "}":
                 items = self.args()
             self.expect("}")
+            # `{1, 2}` is a set; `{"k": 1}` uses named args and is a map.
+            if items and not any(isinstance(a, A.Arg) and a.is_named for a in items):
+                return A.SetExpr(items)
             return A.MapExpr(items)
         if t.type == "move":
             self.advance()
