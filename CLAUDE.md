@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 4. Core IR      -> `tools/core_ir.py`    -> `docs/CORE-IR.md` (desugars `for`->`while`, surface->reduced AST)
 5. Typecheck    -> `tools/typecheck.py`  -> `docs/DESIGN.md` §7 (types; phase 2b; no overload, structural typing)
 6. Borrow check -> `babirusas/src/borrowir` -> `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md` (NLL-style, intra-procedural)
-7. Codegen WASM -> `tools/codegen_wasm.py` -> `docs/COMPILACION.md` §2 (int/float-only MVP subset)
+7. Codegen WASM -> `tools/codegen/`       -> `docs/COMPILACION.md` §2 (int/float-only MVP subset)
 8. Encode       -> `tools/wasm_encoder.py` -> raw wasm binary sections (types/funcs/exports/code)
 - Also: `tools/index.py` implements fase-1 signature scan (`.mimidx`) per `docs/INDEXACION.md` / `docs/INDICE-LLM.md`.
 - `tools/measure.py`, `tools/micro.py`: token-cost measurement vs Python/Rust (needs `tiktoken`, not installed by default).
@@ -42,7 +42,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Closures do not escape in v0.1 (can't be returned/stored) — this is what keeps capture-by-borrow sound.
 - `spawn` transfers (implicit move) all args; no live borrow may cross `await` (I5, replaces Send/Sync).
 - Borrow checker is NOT proven sound (no formal semantics/soundness proof yet) — see `docs/SOUNDNESS.md` for known holes (A1-A9) and `docs/FORMAL.md` for the proof plan. Treat ownership rules as "best-effort spec," not verified.
-- §10 of SOUNDNESS.md: exclusivity is by PATH (`overlap()` on field paths), not by whole-owner — `swap(p.a, p.b)` is sound and accepted; `swap(p.a, p.a)` rejected. Confirm `borrow.py` matches this if touching it.
+- §10 of SOUNDNESS.md: exclusivity is by PATH (`overlap()` on field paths), not by whole-owner — `swap(p.a, p.b)` is sound and accepted; `swap(p.a, p.a)` rejected. Confirm `babirusas/src/borrowir/borrow.py` matches this if touching it.
 - A9 (drop ordering on early-exit paths `?`/`or:`/`return`/`break`) is explicitly UNSPECIFIED — be careful extending borrow.py around early returns.
 
 ## CLI
