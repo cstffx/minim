@@ -110,6 +110,12 @@ def cmd_test(args):
     subprocess.run([sys.executable, "-m", "pytest"], check=False)
     return 0
 
+def cmd_fmt(args):
+    import subprocess, sys, os
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "fmt.py")
+    subprocess.run([sys.executable, script, args.file], check=False)
+    return 0
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="minimc")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -130,9 +136,9 @@ def main(argv=None):
     p_test = sub.add_parser("test", help="run test suite")
     p_test.set_defaults(func=cmd_test)
 
-    p_fmt = sub.add_parser("fmt", help="format a .mim file (not implemented)")
+    p_fmt = sub.add_parser("fmt", help="format a .mim file")
     p_fmt.add_argument("file")
-    p_fmt.set_defaults(func=lambda a: (print("fmt: not implemented"), 0)[1])
+    p_fmt.set_defaults(func=cmd_fmt)
 
     args = ap.parse_args(argv)
     return args.func(args)
