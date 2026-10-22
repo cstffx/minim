@@ -11,10 +11,6 @@ fn main()
 	print("Hola, mundo!")
 ```
 
-## Ejemplo más complejo (conteo de palabras)
-
-El código completo de cada versión está en la carpeta [`code/`](code/).
-
 ## Lenguajes aún más tersos
 
 APL, J y K pueden ganar en brevedad (a costa de legibilidad). Ejemplos del mismo
