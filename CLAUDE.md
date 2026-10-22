@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## STATUS
 - Mantener `status.md` actualizado a medida que se avanza: marcar tareas completadas y anotar bloqueos.
 - Todo agente que modifique el repo debe actualizar `status.md` antes de commitear.
+- Si un agente encuentra la necesidad de un paso que no esta en `PLAN.md`, debe actualizar y expandir el plan.
 
 ## IDENTITY
 - Minim: token-minimal statically-typed language, `.mim` files, compiles to WASM.
