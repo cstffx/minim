@@ -1,0 +1,5 @@
+[project]
+name = "babirusas"
+version = "0.0.1"
+description = "Shared IR + reusable borrow checker"
+requires-python = ">=3.10"

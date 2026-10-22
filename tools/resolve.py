@@ -331,11 +331,11 @@ class Resolver:
         bs = scope.child("block")
         self._resolve_pattern(arm.pattern, bs, define=True)
         if arm.guard:
-            self._resolve_expr(arm.guard, scope)
+            self._resolve_expr(arm.guard, bs)
         if isinstance(arm.body, Suite):
             self._resolve_suite(arm.body, bs)
         elif arm.body is not None:
-            self._resolve_expr(arm.body, scope)
+            self._resolve_expr(arm.body, bs)
 
     def _resolve_binding(self, binding, scope, define=False):
         if binding.kind == "name":

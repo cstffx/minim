@@ -212,8 +212,21 @@ def local_tee(idx):
     return bytes([0x22]) + _uleb128_static(idx)
 
 
+def _sleb128_static(val):
+    out = bytearray()
+    more = True
+    while more:
+        byte = val & 0x7F
+        val >>= 7
+        if (val == 0 and (byte & 0x40) == 0) or (val == -1 and (byte & 0x40) != 0):
+            more = False
+        else:
+            byte |= 0x80
+        out.append(byte)
+    return bytes(out)
+
 def i32_const(val):
-    return bytes([0x41]) + _uleb128_static(val & 0xFFFFFFFF)
+    return bytes([0x41]) + _sleb128_static(val)
 
 
 GLOBAL_GET = lambda idx: bytes([0x23]) + _uleb128_static(idx)
