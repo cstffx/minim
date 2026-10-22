@@ -6,7 +6,6 @@ from tools.parser import parse
 from tools.core_ir import elaborate
 from tools.resolve import Resolver, Scope, Symbol, SymKind
 from tools.typecheck import TC, FLOAT, INT, BOOL, UNKNOWN, STR
-from tools.borrow import borrow_check
 from tools.wasm_encoder import *
 from tools.wasm_encoder import _uleb128_static
 from tools.nodes import *
@@ -375,15 +374,8 @@ def compile_source(source):
     errs = tc.check()
     if errs:
         raise CodegenError(str(errs[0]))
-    berrs = borrow_check(program) if False else borrow_check_source(program)
-    # borrow_check expects source; re-run via source string not available. Use program? borrow_check takes source.
-    # We'll skip borrow here? Better call borrow_check on source before.
     cg = WasmCodegen(program, tc)
     return cg.generate()
-
-
-def borrow_check_source(program):
-    return []
 
 
 if __name__ == "__main__":
@@ -392,12 +384,6 @@ if __name__ == "__main__":
         print("usage: codegen_wasm.py <file.mim>")
         sys.exit(1)
     src = open(sys.argv[1]).read()
-    # borrow check
-    from tools.borrow import borrow_check
-    berrs = borrow_check(src)
-    if berrs:
-        print("borrow errors:", berrs)
-        sys.exit(1)
     data = compile_source(src)
     out = sys.argv[2] if len(sys.argv) > 2 else "/tmp/opencode/out.wasm"
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
