@@ -11,12 +11,6 @@ fn main()
 	print("Hola, mundo!")
 ```
 
-## Lenguajes aún más tersos
-
-APL, J y K pueden ganar en brevedad (a costa de legibilidad). Ejemplos del mismo
-problema en [`code/apl.md`](code/apl.md), [`code/j.md`](code/j.md) y
-[`code/k.md`](code/k.md) (valores en la tabla de métricas).
-
 ## Métrica real del ahorro de tokens
 
 Medido con tokenizadores BPE reales (`o200k_base` / `cl100k_base`) sobre 5 programas
