@@ -4,8 +4,6 @@ Lenguaje de programación de alto nivel diseñado **para que una IA escriba cód
 un bajo consumo de tokens**, sin renunciar a tipado estático, verificación de
 préstamos (*borrow checker*) ni compilación rápida de un solo paso.
 
-> Estado: **diseño** (v0.1). No hay implementación todavía.
-
 ## Hola, mundo
 
 ```python
