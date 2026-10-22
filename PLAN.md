@@ -1,19 +1,68 @@
-# Plan: AST -> BIR -> Borrow Check -> Codegen -> WASM
+# Plan completo: compilador Minim (AST -> BIR -> borrow check -> codegen -> WASM)
 
-## Fase 1: Traductor AST -> BIR (parcial)
-- Soportar FnDecl, params, locals.
-- Statements: Let/Var, Assign, Return, ExprStmt (call).
-- Expresiones: lit, name, binop, unaryop, postfix call (básico).
-- If/While/For/Match pendientes.
+Objetivo: implementar toda la especificacion de Minim 0.1, paso a paso, sin retroceder.
 
-## Fase 2: Integración borrow checker
-- Convertir Function BIR y ejecutar babirusas.
-- Reportar errores con spans.
+## Fase 0: Infraestructura
+- [ ] Paquete `minimc` CLI (`run|build|fmt|index|test`).
+- [ ] Parser + lexer estables (tab-only, continuacion en brackets).
+- [ ] Formateador canonico (`minim fmt`).
+- [ ] Indexador (`.mimidx`).
 
-## Fase 3: Codegen desde BIR
-- Refactor WasmCodegen para consumir BIR en lugar de AST.
-- Mantener subset int.
+## Fase 1: Nucleo del lenguaje (tipos primitivos y control)
+- [ ] Tipos: int, float, bool, str, bytes, nil, anchos explicitos.
+- [ ] Literales: enteros, floats, str, raw, f-string, bytes, multilinea, listas, mapas, sets, tuplas.
+- [ ] Operadores aritmeticos, comparacion encadenable, logicos, bits, acceso.
+- [ ] Sentencias: let/var, assign, if/elif/else, while, break/continue, return, expr stmt.
+- [ ] Expresiones: precedencia, if-expr, match-expr, closures, `it`.
+- [ ] Funciones: params tipados, retorno inferido, ultima expr = retorno, sin declaraciones adelantadas.
+- [ ] Modulos: use, fichero = modulo, visibilidad por `_`.
 
-## Fase 4: Tests y validación
-- Tests por fase.
-- Comparar salida con implementación anterior.
+## Fase 2: Tipos compuestos y genericos
+- [ ] type (producto) con campos y metodos.
+- [ ] type suma con case (variantes).
+- [ ] trait y generico acotado `T: Trait`.
+- [ ] Tipado estructural, copia/move automatico.
+- [ ] Colecciones: [T], map[K,V], set[T], tuplas, slices.
+- [ ] Opcionales T?, errores T! y `?`, `or`, `or:` con `it`.
+- [ ] Conversiones `as`, `str()`, `parse[T]()`.
+
+## Fase 3: Patron matching y concurrencia
+- [ ] match con patrones, guardas, else.
+- [ ] spawn/await, task[T].
+- [ ] for (rangos, listas, indices, mapas).
+
+## Fase 4: Traduccion AST -> BIR
+- [ ] Traducir todas las construcciones anteriores a BIR.
+- [ ] Generar locals/params/blocks/terminators.
+- [ ] Expresiones a Rvalue, calls a Stmt Call.
+- [ ] Integrar con babirusas (borrow check).
+
+## Fase 5: Borrow checker completo (NLL)
+- [ ] Reglas de borrow (exclusividad, compartido, move, parcial, NLL, drops).
+- [ ] Mensajes con spans.
+
+## Fase 6: Codegen desde BIR -> WASM
+- [ ] Refactor WasmCodegen para consumir BIR.
+- [ ] Soporte completo de tipos y operaciones.
+- [ ] Manejo de errores y opcionales.
+
+## Fase 7: Prelude y modulos estandar
+- [ ] Implementar prelude (print, etc.).
+- [ ] Modulos fs, env, io, net, json, time, rand, math, os, task.
+
+## Fase 8: Formal y soundness
+- [ ] Validacion formal (CoreMin, Datalog, teoremas).
+- [ ] Agujeros conocidos y correcciones.
+
+## Fase 9: Tests y benchmarks
+- [ ] Suite de tests por fase.
+- [ ] Benchmarks de tokens.
+- [ ] Verificacion end-to-end.
+
+## Fase 10: Detalles finos
+- [ ] Formato canonico (minim fmt) y reglas de estilo.
+- [ ] Indexacion (.mimidx) y consultas LLM.
+- [ ] Mensajes de error con spans exactos.
+- [ ] Optimizaciones basicas en BIR (constant folding, dead code).
+
+Criterio de exito: `minim run examples/*.mim` funciona para toda la spec, borrow checker rechaza programas inseguros, codegen produce WASM valido.
