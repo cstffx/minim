@@ -1,5 +1,11 @@
 # Minim
 
+> ⚠️ **Proyecto en desarrollo (work in progress).** Minim es un experimento activo:
+> el frontend (lexer/parser/typecheck/borrow checker) y el codegen WASM cubren una
+> parte creciente de la especificación, pero aún no está listo para uso en
+> producción. Fases 6-10 del `PLAN.md` siguen en curso; consulta `status.md` para
+> el estado actual.
+
 Lenguaje de programación de alto nivel diseñado desde el comienzo para mantener un
 balance de legibilidad y bajo consumo de tokens con modelos de inteligencia artificial,
 con tipado estático, verificación de préstamos (*borrow checker*) y compilación rápida
