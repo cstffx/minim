@@ -203,6 +203,13 @@ class StmtMixin:
                 code += self._branch_to(target)
             elif isinstance(st, Assign):
                 self._gen_assign(st, code, qname)
+            elif isinstance(st, (SpawnStmt, AwaitStmt)):
+                # v0.1 secuencial: el valor se evalua aqui; como sentencia se
+                # descarta (el resultado real se usa via `let t = spawn ...`).
+                self._gen_expr(st.expr, code, qname)
+                ty = self._tc_type(st.expr, qname)
+                if (not is_last) and ty not in (None, NIL):
+                    code += DROP
             elif isinstance(st, MatchStmt):
                 mv = is_last and self._stmt_type(st, qname) not in (None, NIL)
                 self._gen_match_core(st.expr, st.arms, code, qname, fn, want_value=mv)

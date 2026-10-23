@@ -640,6 +640,7 @@ class ExprMixin:
             code += GLOBAL_GET(self.tmp_global)
 
         def _type_is_ptr(self, ty):
+            ty = self._erase_task(ty)
             if isinstance(ty, tuple):
                 if ty[0] == "p":
                     return ty[1] in ("str", "bytes")
@@ -904,6 +905,7 @@ class ExprMixin:
             ty = self._tc_type(e, qname)
             while isinstance(ty, tuple) and ty[0] in ("opt", "res", "borrow"):
                 ty = ty[1]
+            ty = self._erase_task(ty)
             helpers = self._ensure_str_helpers()
             if isinstance(e, NilLit) or ty == ("p", "nil"):
                 code += i32_const(self._str_ptr("nil"))
@@ -2635,6 +2637,10 @@ class ExprMixin:
                     else:
                         code += I64_EQZ
                     code += bytes([0xAD])
+                elif e.op in ("spawn", "await"):
+                    # v0.1: ejecucion secuencial; spawn evalua ya y await es
+                    # la identidad sobre el valor de la tarea.
+                    self._gen_expr(e.operand, code, qname)
                 else:
                     _unsupported(f"el operador unario '{e.op}'", e)
             elif isinstance(e, Postfix):
@@ -2643,11 +2649,9 @@ class ExprMixin:
                     base_ty = self._tc_type(e.base, qname)
                     if isinstance(base_ty, tuple) and base_ty[0] == "borrow":
                         base_ty = base_ty[1]
-                    if base_ty == STR and e.ops[0][1] in ("len", "upper", "lower"):
-                        recv = e.base
-                        method = e.ops[0][1]
-                    else:
-                        pass
+                    recv = e.base
+                    method = e.ops[0][1]
+                    if base_ty == STR and method in ("len", "upper", "lower"):
                         # reuse implementation by setting e.base? We'll inline with recv.
                         if method == "len":
                             self._gen_expr(recv, code, qname)
@@ -3693,6 +3697,9 @@ class ExprMixin:
                     if callee_name == "print":
                         arg_expr = args[0].value if (args and isinstance(args[0], Arg)) else (args[0] if args else None)
                         arg_ty = self._tc_type(arg_expr, qname) if arg_expr is not None else None
+                        if isinstance(arg_ty, tuple) and arg_ty[0] == "borrow":
+                            arg_ty = arg_ty[1]
+                        arg_ty = self._erase_task(arg_ty)
                         if (isinstance(arg_expr, (StrLit, RStrLit, MlStrLit, BytesLit, FStrLit, ItExpr))
                                 or arg_ty == STR
                                 or (isinstance(arg_ty, tuple) and arg_ty[0] == "p" and arg_ty[1] == "bytes")):

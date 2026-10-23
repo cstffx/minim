@@ -18,8 +18,95 @@ def _binding_name(b):
     return None
 
 
-def desugar_for_stmt(st):
-    """Devuelve una lista de statements core equivalentes a un ForStmt."""
+_loop_seq = [0]
+
+
+def _fresh(prefix):
+    _loop_seq[0] += 1
+    return f"__{prefix}{_loop_seq[0]}"
+
+
+def _method_call(receiver, method, args=()):
+    # El parser anida una capa Postfix por operacion; los handlers de codegen
+    # asumen esa forma (`recv.method` en `e.base`, llamada en `e.ops`).
+    return Postfix(Postfix(receiver, [("field", method)]), [("call", list(args))])
+
+
+def _index(receiver, idx):
+    return Postfix(receiver, [("index", idx)])
+
+
+def _field(receiver, name):
+    return Postfix(receiver, [("field", name)])
+
+
+def _iter_type(st, tc, scope):
+    """Tipo estatico del iterable, cuando se dispone de typecheck."""
+    if tc is None or scope is None:
+        return None
+    try:
+        return tc.expr(st.iter, scope)
+    except Exception:
+        return None
+
+
+def _desugar_indexed(st, source_expr, body_stmts, mode):
+    """Bucle indexado sobre `source_expr`.
+
+    mode:
+      "elem"    -> `for x in xs`: x = &it[idx]
+      "index"   -> `for i, x in xs`: i = idx, x = &it[idx]
+      "fields"  -> `for a, b in pares`: a = pair.0, b = pair.1
+    """
+    it_name = _fresh("it")
+    idx_name = _fresh("i")
+    named = [b for b in (st.bindings or []) if _binding_name(b)]
+    out = [
+        # Iterate by borrow, not by move: `for x in v` must not consume `v`.
+        LetStmt([Binding("name", it_name)], BorrowExpr(source_expr)),
+        LetStmt([Binding("name", idx_name)], IntLit("0")),
+    ]
+    cond = BinOp("<", NameExpr(idx_name), _field(NameExpr(it_name), "len"))
+    loop_body = []
+    if mode == "elem":
+        if named:
+            loop_body.append(LetStmt([named[0]],
+                            BorrowExpr(_index(NameExpr(it_name), NameExpr(idx_name)))))
+    elif mode == "index":
+        if named:
+            loop_body.append(LetStmt([named[0]], NameExpr(idx_name)))
+        if len(named) > 1:
+            loop_body.append(LetStmt([named[1]],
+                            BorrowExpr(_index(NameExpr(it_name), NameExpr(idx_name)))))
+    else:
+        # let a, b = &it[idx] (tuplas: campos 0 y 1)
+        pair = _fresh("pair")
+        loop_body.append(LetStmt([Binding("name", pair)],
+                        BorrowExpr(_index(NameExpr(it_name), NameExpr(idx_name)))))
+        for pos, b in enumerate(named):
+            loop_body.append(LetStmt([b], _field(NameExpr(pair), pos)))
+    loop_body.extend(body_stmts)
+    # Touch the iterator after the user body so the borrow's last-use covers
+    # the whole loop body, not just its last textual mention of it -- the
+    # loan must stay live for every statement in the loop, including ones
+    # that don't reference it directly (e.g. mutating the owner, which
+    # must be rejected while the iteration borrow is alive).
+    loop_body.append(ExprStmt(NameExpr(it_name)))
+    loop_body.append(Assign(Place(idx_name, []), "+=", IntLit("1")))
+    loop_stmt = WhileStmt(cond, Suite(loop_body))
+    # `continue` in a `for` must still run the loop increment. Codegen uses
+    # this marker to wrap the user body in a block that continue targets.
+    loop_stmt._for_continue_count = len(loop_body) - 2
+    out.append(loop_stmt)
+    return out
+
+
+def desugar_for_stmt(st, tc=None, scope=None):
+    """Devuelve una lista de statements core equivalentes a un ForStmt.
+
+    Con `tc` (typecheck ya ejecutado) se distingue el tipo del iterable para
+    mapear `for k, v in mapa` y `for i, x in lista` con la semantica correcta.
+    """
     it = st.iter
     body_stmts = list(st.body.stmts) if hasattr(st.body, "stmts") else []
     # Range: for x in a..b / a..=b
@@ -32,54 +119,35 @@ def desugar_for_stmt(st):
                 varname = vn
                 break
         if varname is None:
-            varname = "_i"
+            varname = _fresh("i")
         # let var = left
         out = [LetStmt([Binding("name", varname)], it.left)]
         # while var < right (or <=)
         cond = BinOp("<=" if inclusive else "<", NameExpr(varname), it.right)
         loop_body = list(body_stmts) + [Assign(Place(varname, []), "+=", IntLit("1"))]
-        out.append(WhileStmt(cond, Suite(loop_body)))
+        loop_stmt = WhileStmt(cond, Suite(loop_body))
+        # `continue` debe ejecutar el incremento antes de repetir.
+        loop_stmt._for_continue_count = len(body_stmts)
+        out.append(loop_stmt)
         return out
-    # Lista/iterable: for x in e
-    varname = None
-    for b in (st.bindings or []):
-        vn = _binding_name(b)
-        if vn:
-            varname = vn
-            break
-    if varname is None:
-        varname = "_x"
-    out = []
-    # Iterate by borrow, not by move: `for x in v` must not consume `v`.
-    out.append(LetStmt([Binding("name", "_it")], BorrowExpr(it)))
-    out.append(LetStmt([Binding("name", "_i")], IntLit("0")))
-    cond = BinOp("<", NameExpr("_i"), Postfix(NameExpr("_it"), [("field", "len")]))
-    loop_body = []
-    # Bind by borrow, not by value: extracting a non-copyable element by
-    # index (`_it[_i]`) would otherwise count as a partial move of `_it`.
-    named_bindings = [b for b in (st.bindings or []) if _binding_name(b)]
-    if len(named_bindings) > 1:
-        for idx, b in enumerate(named_bindings):
-            elem = Postfix(NameExpr("_it"), [("index", NameExpr("_i"))])
-            field = Postfix(elem, [("field", idx)])
-            loop_body.append(LetStmt([b], field))
-    else:
-        loop_body.append(LetStmt([Binding("name", varname)],
-                        BorrowExpr(Postfix(NameExpr("_it"), [("index", NameExpr("_i"))]))))
-    loop_body.extend(body_stmts)
-    # Touch `_it` after the user body so the borrow's last-use covers the
-    # whole loop body, not just its last textual mention of `_it` -- the
-    # loan must stay live for every statement in the loop, including ones
-    # that don't reference `_it` directly (e.g. mutating the owner, which
-    # must be rejected while the iteration borrow is alive).
-    loop_body.append(ExprStmt(NameExpr("_it")))
-    loop_body.append(Assign(Place("_i", []), "+=", IntLit("1")))
-    loop_stmt = WhileStmt(cond, Suite(loop_body))
-    # `continue` in a `for` must still run the loop increment. Codegen uses
-    # this marker to wrap the user body in a block that continue targets.
-    loop_stmt._for_continue_count = len(loop_body) - 2
-    out.append(loop_stmt)
-    return out
+
+    ity = _iter_type(st, tc, scope)
+    named = [b for b in (st.bindings or []) if _binding_name(b)]
+    # Mapas: una variable recorre claves; dos recorren pares (clave, valor).
+    if isinstance(ity, tuple) and ity[0] == "map":
+        if len(named) <= 1:
+            return _desugar_indexed(st, _method_call(it, "keys"), body_stmts,
+                                    mode="elem")
+        return _desugar_indexed(st, _method_call(it, "items"), body_stmts,
+                                mode="fields")
+    # Listas: `for i, x in xs` recorre indice + elemento.
+    if isinstance(ity, tuple) and ity[0] == "list":
+        return _desugar_indexed(st, it, body_stmts,
+                                mode=("index" if len(named) > 1 else "elem"))
+    # str/bytes/set u otros iterables: una variable; con dos, se asume
+    # indice + elemento salvo que el tipo sea desconocido.
+    return _desugar_indexed(st, it, body_stmts,
+                            mode=("index" if len(named) > 1 else "elem"))
 
 
 _CMP_OPS = {"<", "<=", ">", ">=", "==", "!="}
@@ -193,7 +261,7 @@ def _desugar_expr(e):
         return MapExpr(items, e.span)
     return e
 
-def _desugar_stmt_exprs(st):
+def _desugar_stmt_exprs(st, tc=None):
     if isinstance(st, (LetStmt, VarStmt, LetDecl, VarDecl)):
         st.value = _desugar_expr(st.value)
     elif isinstance(st, Assign):
@@ -207,90 +275,92 @@ def _desugar_stmt_exprs(st):
     elif isinstance(st, IfStmt):
         st.cond = _desugar_expr(st.cond)
         if st.then is not None:
-            _desugar_suite(st.then)
+            _desugar_suite(st.then, tc)
         for ec, es in (st.elifs or []):
             ec_new = _desugar_expr(ec)
             # store back
             # elifs is list of (cond, suite)
             pass
         if st.else_ is not None:
-            _desugar_suite(st.else_)
+            _desugar_suite(st.else_, tc)
     elif isinstance(st, WhileStmt):
         st.cond = _desugar_expr(st.cond)
         if st.body is not None:
-            _desugar_suite(st.body)
+            _desugar_suite(st.body, tc)
     elif isinstance(st, MatchStmt):
         st.expr = _desugar_expr(st.expr)
         for arm in (st.arms or []):
             if arm.guard is not None:
                 arm.guard = _desugar_expr(arm.guard)
             if isinstance(arm.body, Suite):
-                _desugar_suite(arm.body)
+                _desugar_suite(arm.body, tc)
             elif arm.body is not None:
                 arm.body = _desugar_expr(arm.body)
     elif isinstance(st, ForStmt):
         if not isinstance(st.iter, str):
             st.iter = _desugar_expr(st.iter)
         if st.body is not None:
-            _desugar_suite(st.body)
+            _desugar_suite(st.body, tc)
+    elif isinstance(st, (SpawnStmt, AwaitStmt)):
+        st.expr = _desugar_expr(st.expr)
     elif isinstance(st, (FnDecl,)):
         if st.body is not None:
-            _desugar_suite(st.body)
+            _desugar_suite(st.body, tc)
     elif isinstance(st, TypeDecl):
         for m in (st.members or []):
             if isinstance(m.node, FnDecl) and m.node.body is not None:
-                _desugar_suite(m.node.body)
+                _desugar_suite(m.node.body, tc)
     # handle elifs properly
     if isinstance(st, IfStmt):
         new_elifs = []
         for ec, es in (st.elifs or []):
             new_elifs.append((_desugar_expr(ec), es))
-            _desugar_suite(es)
+            _desugar_suite(es, tc)
         st.elifs = new_elifs
 
-def _desugar_suite(suite):
+def _desugar_suite(suite, tc=None):
     if not hasattr(suite, "stmts"):
         return
     new = []
     for st in suite.stmts:
         if isinstance(st, ForStmt):
-            ds = desugar_for_stmt(st)
+            ds = desugar_for_stmt(st, tc, tc.stmt_scopes.get(id(st)) if tc else None)
             for nst in ds:
-                _desugar_stmt_exprs(nst)
+                _desugar_stmt_exprs(nst, tc)
             new.extend(ds)
         else:
-            _desugar_stmt_exprs(st)
+            _desugar_stmt_exprs(st, tc)
             new.append(st)
             if isinstance(st, (IfStmt, WhileStmt, FnDecl, TypeDecl)):
                 pass
     # recurse into nested suites
     for st in new:
         if isinstance(st, IfStmt):
-            if st.then is not None: _desugar_suite(st.then)
+            if st.then is not None: _desugar_suite(st.then, tc)
             for ec, es in (st.elifs or []):
-                _desugar_suite(es)
-            if st.else_ is not None: _desugar_suite(st.else_)
+                _desugar_suite(es, tc)
+            if st.else_ is not None: _desugar_suite(st.else_, tc)
         elif isinstance(st, WhileStmt):
-            if st.body is not None: _desugar_suite(st.body)
+            if st.body is not None: _desugar_suite(st.body, tc)
         elif isinstance(st, FnDecl):
-            if st.body is not None: _desugar_suite(st.body)
+            if st.body is not None: _desugar_suite(st.body, tc)
         elif isinstance(st, TypeDecl):
             for m in (st.members or []):
                 if isinstance(m.node, FnDecl) and m.node.body is not None:
-                    _desugar_suite(m.node.body)
+                    _desugar_suite(m.node.body, tc)
     suite.stmts = new
 
 
-def elaborate(program):
+def elaborate(program, tc=None):
     if hasattr(program, "stmts"):
-        _desugar_suite(Suite(program.stmts) if False else _wrap(program))
+        _wrap(program, tc)
     return program
 
 
-def _wrap(program):
+def _wrap(program, tc=None):
     # Treat program as a suite-like container
     s = Suite(program.stmts)
-    _desugar_suite(s)
+    _desugar_suite(s, tc)
     program.stmts = s.stmts
     return program
 

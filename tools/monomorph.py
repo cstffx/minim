@@ -327,6 +327,8 @@ class _Scanner:
             self.expr(st.cond, scope); self.suite(st.body, scope)
         elif isinstance(st, ForStmt):
             self.expr(st.iter, scope); self.suite(st.body, scope)
+        elif isinstance(st, (SpawnStmt, AwaitStmt)):
+            self.expr(st.expr, scope)
         elif isinstance(st, MatchStmt):
             self.expr(st.expr, scope)
             for arm in (st.arms or []):

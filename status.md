@@ -84,6 +84,33 @@ Actualizado automáticamente por los agentes (ver CLAUDE.md).
 - `examples/shapes.mim` compila y produce el total esperado; `examples/hello.mim`
   compila.
 
+## Fase 3: Patron matching y concurrencia (completada)
+- [x] `match` con patrones, guardas (`case x if cond:`) y `else`; sentencia y
+      expresion.
+- [x] `spawn`/`await` y `task[T]`: en v0.1 `spawn` evalua de forma secuencial y
+      `await` es la identidad; `task[T]` se representa como `T` (sin hilo ni
+      scheduler, WASM MVP sin threads).
+- [x] `for`: rangos (`a..b`, `a..=b`), listas, indices (`for i, x in xs`), mapas
+      (`for k in m` recorre claves, `for k, v in m` recorre pares) y `continue`
+      ejecutando el incremento. Los mapas se desazucaran con el tipo estatico del
+      iterable (core IR tras typecheck: `.keys()` / `.items()`).
+
+### Simplificaciones Fase 3 (documentadas)
+- `spawn` no crea concurrencia real: el cuerpo se evalua en el punto de
+  `spawn` y `await` devuelve el valor ya calculado. La representacion de un
+  `task[T]` es la del propio `T`.
+- `for` sobre mapas copia claves/items a una lista auxiliar, igual que
+  `keys()`/`items()`.
+- `for k, v in lista` sigue la semantica indice + elemento (primer binding
+  `int`); no desestructura tuplas. Para pares de un mapa usar el mapa.
+
+### Tests Fase 3
+- `python3 -m tools.test_core`: 3 casos nuevos (for sobre rangos/listas/
+  indices/mapas con continue; match con guardas y else; spawn/await/task).
+- `minimc run` usa ahora la memoria exportada por el modulo (imprime `str`
+  correctamente) y compila tras ejecutar typecheck y desazucar el core IR.
+
+
 ## Fase 4: AST -> BIR
 - [ ] En progreso: `tools/ast_to_bir.py` (subset).
 

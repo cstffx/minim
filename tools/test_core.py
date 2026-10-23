@@ -257,6 +257,56 @@ fn main()
 		-1.0
 	print(f"{a} {b:.1f} {c} {d:.1f} {65 as str} {str(true)}")
 """, "3 3.0 42 1.5 65 true"),
+
+    ("for: rangos, indices, listas, mapas y continue", """
+fn main()
+	var total = 0
+	for x in 0..5
+		total += x
+	print(f"{total} ")
+	for i, v in [10, 20]
+		print(f"{i}:{v} ")
+	var s = 0
+	for x in 0..10
+		if x == 3
+			continue
+		if x == 6
+			break
+		s += x
+	print(f"{s} ")
+	for k, v in {"a": 1, "b": 2}
+		print(f"{k}={v};")
+	for k in {"x": 7}
+		print(k)
+""", "10 0:10 1:20 12 a=1;b=2;x"),
+
+    ("match: guardas y else", """
+fn classify(n: int) -> str
+	match n
+		case 0:
+			return "cero"
+		case x if x < 0:
+			return "neg"
+		case x if x < 10:
+			return "peq"
+		else:
+			return "grande"
+
+fn main()
+	print(f"{classify(0)} {classify(-1)} {classify(5)} {classify(99)}")
+""", "cero neg peq grande"),
+
+    ("spawn, await y task[T]", """
+fn work(n: int) -> int
+	n * 2
+
+fn main()
+	let t = spawn work(21)
+	let v = await t
+	let t2: task[int] = spawn work(5)
+	spawn work(0)
+	print(f"{v} {await t2}")
+""", "42 10"),
 ]
 
 

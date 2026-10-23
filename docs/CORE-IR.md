@@ -17,18 +17,29 @@ El único desazúcar implementado es **`ForStmt` → `WhileStmt`**, vía
 
 - `for x in a..b` / `a..=b` (rango): se convierte en
   `let x = a; while x </<= b: { body; x += 1 }`.
-- `for x in e` (iterable indexable): se convierte en
-  `let _it = e; let _i = 0; while _i < _it.len: { let x = _it[_i]; body; _i += 1 }`.
+- `for x in e` (lista/iterable indexable): se convierte en
+  `let _it = e; let _i = 0; while _i < _it.len: { let x = &_it[_i]; body; _i += 1 }`.
+- `for i, x in e` (índices): igual, con `let i = _i` y `let x = &_it[_i]`.
+- `for k in m` (mapa): `let _it = m.keys()` y el bucle indexado anterior.
+- `for k, v in m` (mapa): `let _it = m.items()`; cada elemento es una tupla y
+  se liga con `let k = pair.0` / `let v = pair.1`.
 
-`elaborate(program)` recorre recursivamente `If`/`While`/`FnDecl`/`TypeDecl`
-para desazucarar los `for` anidados en cualquier nivel, y reemplaza los nodos
-`ForStmt` del AST por los `WhileStmt` equivalentes. El resultado sigue siendo
-un AST de `tools/nodes.py` (no un tipo de dato IR distinto): typecheck, borrow
-checker y codegen operan sobre ese mismo AST de superficie, ya sin `ForStmt`.
+`elaborate(program, tc=None)` recorre recursivamente
+`If`/`While`/`FnDecl`/`TypeDecl` para desazucarar los `for` anidados en
+cualquier nivel, y reemplaza los nodos `ForStmt` del AST por los `WhileStmt`
+equivalentes. El pipeline ejecuta **typecheck antes de elaborar** y le pasa el
+`TC` a `elaborate`: así `desugar_for_stmt` conoce el tipo estático del
+iterable (`_iter_type`) y distingue mapas de listas. Después se vuelve a
+typechequear el AST ya sin `ForStmt`. El resultado sigue siendo un AST de
+`tools/nodes.py` (no un tipo de dato IR distinto): typecheck, borrow checker y
+codegen operan sobre ese mismo AST de superficie.
 
 Nótese que el propio `desugar_for_stmt` genera un `Assign(place, "+=", ...)`
 para incrementar el índice — es decir, ni siquiera el desazúcar del `for`
-desazucara el `+=` resultante a `x = x + y`.
+desazucara el `+=` resultante a `x = x + y`. Los nombres auxiliares
+(`__itN`, `__iN`, `__pairN`) son frescos para evitar colisiones en bucles
+anidados. El marcador `_for_continue_count` hace que un `continue` ejecute el
+incremento antes de repetir.
 
 ## Lo que NO está desazucarado (y por qué)
 
@@ -68,8 +79,10 @@ favor de `while`, sobre el mismo tipo de nodos de `tools/nodes.py`.
 
 ## Quién consume qué
 
-- El **typechecker** (`tools/typecheck.py`) y el **borrow checker**
-  (`tools/borrow.py`) operan directamente sobre el AST de superficie
+- El **typechecker** (`tools/typecheck.py`) corre dos veces: antes del
+  desazúcar (sobre el AST con `ForStmt`, para tipar el iterable y registrar el
+  scope de cada sentencia) y después (sobre el AST sin `ForStmt`). El **borrow
+  checker** (`tools/borrow.py`) opera directamente sobre el AST de superficie
   (incluyendo `MatchStmt`, llamadas a método, slices y `Assign` con
   operadores compuestos), después de que `core_ir.elaborate()` haya quitado
   los `ForStmt`.

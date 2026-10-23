@@ -71,6 +71,11 @@ def compat(a,b):
     if b[0]=="borrow": b=b[1]
     if a==b: return True
     if a[0]=="u" or b[0]=="u": return True
+    # `task[T]` se representa con el propio valor en v0.1 (spawn/await
+    # secuenciales), asi que es compatible con T en ambos sentidos.
+    if a[0]=="named" and a[1]=="task" and a[2]: a=a[2][0]
+    if b[0]=="named" and b[1]=="task" and b[2]: b=b[2][0]
+    if a==b: return True
     if b[0] in ("opt","res") and compat(a,b[1]): return True
     if a==("p","nil") and (b[0] in ("opt","res") or b==("p","nil")): return True
     if a==("err",) and b[0]=="res": return True
@@ -172,6 +177,9 @@ class TC:
                         self.generic_bounds[(s.name,tp.name)]=_bound_name(tp.bound)
         self.bounds={}
         self.cur_type=None; self.cur_func=None; self.tvs=set(); self.mono=set()
+        # scope used while checking each statement (consumed by core_ir to
+        # desugar `for` loops with the static type of the iterable).
+        self.stmt_scopes={}
         self._register_structs()
         self.module_aliases=dict(getattr(program,"merged_modules",{}))
         self._register()
@@ -463,6 +471,7 @@ class TC:
             if t is not None: last=t
         return last if last is not None else NIL
     def stmt(self,s,scope):
+        self.stmt_scopes[id(s)]=scope
         if isinstance(s,LetStmt):
             vt=self.expr(s.value,scope); self._bind(s.bindings,vt,scope); return None
         if isinstance(s,VarStmt):
@@ -855,6 +864,8 @@ class TC:
             if op in ("spawn","await"):
                 t=self.expr(e.operand,scope)
                 if t[0]=="res": return t
+                if op=="await" and t[0]=="named" and t[1]=="task" and t[2]:
+                    return t[2][0]
                 return t
             return self.expr(e.operand,scope)
         if isinstance(e,BinOp): return self.binop(e,scope)
@@ -868,12 +879,18 @@ class TC:
                 if not compat(t,ct): ct=UNKNOWN
             return L(ct)
         if isinstance(e,MapExpr):
-            vals=[]; has_named=False
+            vals=[]; kts=[]
             for a in (e.items or []):
                 v=a.value if isinstance(a,Arg) else a
-                if isinstance(a,Arg) and a.is_named: has_named=True
+                if isinstance(a,Arg) and a.is_named:
+                    kts.append(self.expr(a.label,scope))
                 vals.append(self.expr(v,scope))
-            kt=STR if has_named else UNKNOWN
+            if kts:
+                kt=kts[0]
+                for t in kts[1:]:
+                    if not compat(t,kt): kt=UNKNOWN
+            else:
+                kt=UNKNOWN
             vt=vals[0] if vals else UNKNOWN
             for t in vals[1:]:
                 if not compat(t,vt): vt=UNKNOWN

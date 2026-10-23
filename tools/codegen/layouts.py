@@ -5,7 +5,14 @@ from tools.nodes import *
 from .util import _unsupported
 
 class LayoutsMixin:
+        def _erase_task(self, ty):
+            """v0.1: task[T] se representa como T (spawn/await secuenciales)."""
+            while isinstance(ty, tuple) and ty[0] == "named" and ty[1] == "task" and ty[2]:
+                ty = ty[2][0]
+            return ty
+
         def _wasm_type(self, ty):
+            ty = self._erase_task(ty)
             if isinstance(ty, tuple):
                 if ty[0] == "p":
                     if ty[1] == "int":
@@ -209,6 +216,8 @@ class LayoutsMixin:
                             walk_str(e.right)
                     else:
                         walk_str(e.operand)
+                elif isinstance(e, BorrowExpr):
+                    walk_str(e.operand)
                 elif isinstance(e, Postfix):
                     walk_str(e.base)
                     for op in (e.ops or []):
@@ -256,6 +265,8 @@ class LayoutsMixin:
                             walk_str(arm.body)
                 elif isinstance(e, (LetStmt, VarStmt)):
                     walk_str(e.value)
+                elif isinstance(e, (SpawnStmt, AwaitStmt)):
+                    walk_str(e.expr)
                 elif isinstance(e, ExprStmt):
                     walk_str(e.expr)
                 elif isinstance(e, IfStmt):
@@ -281,6 +292,8 @@ class LayoutsMixin:
             def walk_str_stmt(st):
                 if isinstance(st, (LetStmt, VarStmt)):
                     walk_str(st.value)
+                elif isinstance(st, (SpawnStmt, AwaitStmt)):
+                    walk_str(st.expr)
                 elif isinstance(st, ExprStmt):
                     walk_str(st.expr)
                 elif isinstance(st, Assign):
@@ -393,7 +406,7 @@ class LayoutsMixin:
                 ty = self._tc_type(e, qname)
                 if isinstance(ty, tuple) and ty[0] == "borrow":
                     ty = ty[1]
-                return ty == FLOAT
+                return self._erase_task(ty) == FLOAT
             except Exception:
                 return False
 

@@ -52,12 +52,22 @@ def compile_pipeline(source, want_wasm, filename=None):
         raise CompileFailure("modules", [str(e)])
 
     try:
-        elaborate(program)
+        tc = TC(program)
+        type_errors = tc.check()
+    except ResolveError as e:
+        raise CompileFailure("resolve", [str(e)])
+    if type_errors:
+        raise CompileFailure("typecheck", [str(e) for e in type_errors])
+
+    # Desugar `for` with the static type of the iterable, then re-check the
+    # core IR that codegen consumes.
+    try:
+        elaborate(program, tc)
     except Exception as e:
         raise CompileFailure("elaborate", [str(e)])
 
-    tc = TC(program)
     try:
+        tc = TC(program)
         type_errors = tc.check()
     except ResolveError as e:
         raise CompileFailure("resolve", [str(e)])
@@ -132,16 +142,17 @@ def cmd_run(args):
         "const fs=require('fs');"
         "const w=fs.readFileSync(process.argv[1]);"
         "const m=new WebAssembly.Module(w);"
-        "const mem=new WebAssembly.Memory({initial:1});"
+        "let inst=null;"
         "const env={"
         "print:(x)=>process.stdout.write(String(x)),"
         "print_f64:(x)=>process.stdout.write(String(x)),"
-        "print_str:(ptr)=>{let e=ptr;while(new Uint8Array(mem.buffer)[e])e++;"
-        "const b=new Uint8Array(mem.buffer,ptr,e-ptr);process.stdout.write(Buffer.from(b).toString())}"
+        "print_str:(ptr)=>{const u=new Uint8Array(inst.exports.memory.buffer);"
+        "let e=ptr;while(u[e])e++;"
+        "process.stdout.write(Buffer.from(u.subarray(ptr,e)).toString())}"
         "};"
-        "const i=new WebAssembly.Instance(m,{env,env});"
-        "if(i.exports._start)i.exports._start();"
-        "else if(i.exports.main)console.log(i.exports.main());"
+        "inst=new WebAssembly.Instance(m,{env});"
+        "if(inst.exports._start)inst.exports._start();"
+        "else if(inst.exports.main)console.log(inst.exports.main());"
     )
     rc = subprocess.run(["node", "-e", js, tmp.name]).returncode
     try:

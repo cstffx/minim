@@ -27,9 +27,9 @@ Objetivo: implementar toda la especificacion de Minim 0.1, paso a paso, sin retr
 - [x] Conversiones `as`, `str()`, `parse[T]()`.
 
 ## Fase 3: Patron matching y concurrencia
-- [ ] match con patrones, guardas, else.
-- [ ] spawn/await, task[T].
-- [ ] for (rangos, listas, indices, mapas).
+- [x] match con patrones, guardas, else.
+- [x] spawn/await, task[T] (v0.1 secuencial: spawn eager, await identidad).
+- [x] for (rangos, listas, indices, mapas).
 
 ## Fase 4: Traduccion AST -> BIR
 - [ ] Traducir todas las construcciones anteriores a BIR.

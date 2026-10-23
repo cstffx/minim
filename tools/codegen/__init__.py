@@ -174,7 +174,7 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
         for p in fn.params:
             if p.type_ is not None:
                 try:
-                    if tc._atype(p.type_) == FLOAT:
+                    if self._erase_task(tc._atype(p.type_)) == FLOAT:
                         fvars.add(p.name)
                 except Exception:
                     pass
@@ -185,7 +185,7 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                     if b.kind == "name" and b.name:
                         if b.type_ is not None:
                             try:
-                                if tc._atype(b.type_) == FLOAT:
+                                if self._erase_task(tc._atype(b.type_)) == FLOAT:
                                     fvars.add(b.name)
                             except Exception:
                                 pass
@@ -235,7 +235,7 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
         for p in fn.params:
             if p.type_ is not None:
                 try:
-                    ty = self.tc._atype(p.type_)
+                    ty = self._erase_task(self.tc._atype(p.type_))
                     if isinstance(ty, tuple) and ty[0] == "named":
                         svars.add(p.name)
                 except Exception:
@@ -246,7 +246,7 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                     if b.kind == "name" and b.name:
                         if b.type_ is not None:
                             try:
-                                ty = self.tc._atype(b.type_)
+                                ty = self._erase_task(self.tc._atype(b.type_))
                                 if isinstance(ty, tuple) and ty[0] == "named":
                                     svars.add(b.name)
                                 if ty == STR or ty == BYTES:
@@ -321,7 +321,7 @@ class WasmCodegen(MatchMixin, LayoutsMixin, StmtMixin, ExprMixin):
                         is_list = False
                         if b.type_ is not None:
                             try:
-                                ty = self.tc._atype(b.type_)
+                                ty = self._erase_task(self.tc._atype(b.type_))
                                 if isinstance(ty, tuple) and ty[0] == "list":
                                     is_list = True
                             except Exception:
@@ -418,11 +418,13 @@ def compile_source(source, filename=None):
     from tools.modules import load_modules
     base = os.path.dirname(os.path.abspath(filename)) if filename else os.getcwd()
     load_modules(program, base)
-    elaborate(program)
+    # Typecheck before elaboration so `for` loops can be desugared with the
+    # static type of the iterable (maps vs lists), then re-check the core IR.
     tc = TC(program)
     errs = tc.check()
     if errs:
         raise CodegenError(str(errs[0]))
+    elaborate(program, tc)
     from tools.monomorph import monomorphize
     try:
         program = monomorphize(program)
