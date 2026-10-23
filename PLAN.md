@@ -32,10 +32,10 @@ Objetivo: implementar toda la especificacion de Minim 0.1, paso a paso, sin retr
 - [x] for (rangos, listas, indices, mapas).
 
 ## Fase 4: Traduccion AST -> BIR
-- [ ] Traducir todas las construcciones anteriores a BIR.
-- [ ] Generar locals/params/blocks/terminators.
-- [ ] Expresiones a Rvalue, calls a Stmt Call.
-- [ ] Integrar con babirusas (borrow check).
+- [x] Traducir todas las construcciones anteriores a BIR.
+- [x] Generar locals/params/blocks/terminators.
+- [x] Expresiones a Rvalue, calls a Stmt Call.
+- [x] Integrar con babirusas (borrow check).
 
 ## Fase 5: Borrow checker completo (NLL)
 - [ ] Un valor, un dueño; move al asignar/pasar (salvo copiables).

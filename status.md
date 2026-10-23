@@ -111,8 +111,52 @@ Actualizado automáticamente por los agentes (ver CLAUDE.md).
   correctamente) y compila tras ejecutar typecheck y desazucar el core IR.
 
 
-## Fase 4: AST -> BIR
-- [ ] En progreso: `tools/ast_to_bir.py` (subset).
+## Fase 4: AST -> BIR (completada)
+- [x] `tools/ast_to_bir.py`: traduce todo el AST soportado hoy (el que produce
+      `tools/core_ir.py`, con `for` ya desazucarado) a BIR de
+      `babirusas/src/borrowir/ir.py`.
+- [x] Locals/params/blocks/terminators: un `Local` por binding, temporales para
+      valores intermedios, `StorageLive`/`StorageDead` por scope, bloques con
+      `Goto`/`SwitchInt`/`Return` y orden DFS/RPO desde la entrada.
+- [x] Expresiones a `Rvalue` (`Use`, `BinOp`, `UnOp`, `Aggregate`, `Cast`,
+      `Const`, `Call`) y llamadas a `Stmt("Call")` con `call_func`,
+      `call_args`, `call_dest` y `call_target`.
+- [x] Cobertura: `let`/`var` (binding simple y destructuring), asignacion y
+      compuestas, `if`/`elif`/`else`, `while`, `match` (sentencia y expresion),
+      `return`, `break`/`continue`, `spawn`/`await`; literales, nombres, binop,
+      unario, llamadas (incluidas metodos `Type.metodo`/`list.push`/...),
+      campo/indice, listas/mapas/sets/tuplas, constructores producto/suma,
+      `if`/`match` como expresion, closures e `it` (elevadas a
+      `<owner>$lambdaN` con capturas como parametros), `or`/`?`.
+- [x] Integracion con babirusas: `translate_program`/`translate_module`/
+      `translate_function`, `borrow_check_function`/`borrow_check_translated`/
+      `borrow_check_program` y CLI
+      `python3 -m tools.ast_to_bir <file.mim> [--dump]`.
+- [x] Sin cambios en el pipeline: `minimc.py` sigue compilando desde AST (el
+      codegen desde BIR es Fase 6).
+
+### Decisiones Fase 4 (documentadas)
+- Sin globals en BIR: las sentencias de nivel superior se agrupan en `main`
+  (o `__top` si ya existe `main`).
+- Asignaciones de tipos copiables usan `Rvalue("cast", ...)` para que el borrow
+  checker basico no las trate como moves; listas/mapas/sets si son moves.
+- Tests de variante de suma como `binop("==", unaryop("tag", tmp), const_int(i))`;
+  los bindings de `match` usan `cast` para evitar falsos moves parciales.
+- Bloques reordenados por DFS/RPO desde la entrada para que el recorrido lineal
+  del borrow checker se aproxime al orden de ejecucion (necesario para
+  `wordcount.mim`).
+- `self` se resuelve fijando `tc.cur_type = owner` al tipar metodos.
+
+### Tests Fase 4
+- `python3 -m tools.test_ast_to_bir`: 9 casos (aritmetica, if/else,
+  while+break/continue, llamada con retorno, struct/suma+match,
+  list/map/set/tuple, closures/`it`, `or`/`?`, integracion con borrow checker
+  y caso negativo de move).
+- Los 19 casos de `python3 -m tools.test_core` traducen y pasan el borrow
+  check; todos los `examples/*.mim` (incluido `wordcount.mim`) tambien.
+- `python3 -m tools.test_core`, `test_parser`, `test_codegen`, `test_encoder`,
+  `test_struct`, `minimc.py check examples/hello.mim` y
+  `examples/shapes.mim`: pasan.
 
 ## Fase 5: Borrow checker
 - [x] `babirusas` implementado (IR + borrow checker basico, 3 tests).
@@ -123,4 +167,4 @@ Actualizado automáticamente por los agentes (ver CLAUDE.md).
 
 ## Notas
 - Borrow checker canonico: `babirusas/src/borrowir`.
-- Compilador legacy usa AST directamente hasta completar Fase 4.
+- `minimc.py` sigue compilando desde AST; el codegen desde BIR llega en Fase 6.
