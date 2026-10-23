@@ -1232,7 +1232,7 @@ class Translator:
                         otherwise=else_b))
 
         self._goto_block(then_b)
-        self.translate_suite(then_suite, dest)
+        self._if_branch(then_suite, dest)
         if not self._terminated():
             self._goto(join_b)
 
@@ -1241,11 +1241,22 @@ class Translator:
             ec, es = elifs[0]
             self._lower_if(ec, es, elifs[1:], else_suite, dest)
         elif else_suite is not None:
-            self.translate_suite(else_suite, dest)
+            self._if_branch(else_suite, dest)
         if not self._terminated():
             self._goto(join_b)
 
         self._goto_block(join_b)
+
+    def _if_branch(self, body, dest):
+        """Rama de `if`: Suite (sentencia) o expresion (`if` como valor)."""
+        if body is None:
+            return
+        if isinstance(body, A.Suite):
+            self.translate_suite(body, dest)
+        elif dest is not None:
+            self.lower_into(dest, body)
+        else:
+            self._eval_discard(body)
 
     def _lower_while(self, st):
         cond_b = self._new_block()
@@ -1602,9 +1613,11 @@ class _ProgramTranslator(Translator):
         self.loops = []
         self._initializing = set()
         self.ret_type = self._fn_ret_type(fd, owner)
+        fn.ret_type = self.ret_type
         self.scope = self._func_scope(fd)
         self.ret_place = _local(self._new_local(self._fresh("ret"), self.ret_type,
                                                 mutable=True))
+        fn.ret_local = self.ret_place.name
 
         for p in (fd.params or []):
             if p.type_ is not None:

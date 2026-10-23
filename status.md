@@ -191,10 +191,42 @@ Actualizado automáticamente por los agentes (ver CLAUDE.md).
 - Los 19 casos de `tools.test_core`, los 5 `examples/*.mim` y
   `minimc.py check` pasan el borrow check. Los tests de Fase 1-4 siguen verdes.
 
-## Fase 6: Codegen desde BIR
-- [ ] Pendiente.
+## Fase 6: Codegen desde BIR (6.1 completada)
+- [x] `tools/codegen_bir.py`: backend WASM que consume directamente las
+      funciones BIR de `translate_program` (no el AST). Cubre el subset
+      escalar: `int`/`bool` (i64), `float` (f64), `str`/`bytes` (puntero i32),
+      `nil`; params/locales/temporales tipados desde BIR; `Assign`, `Call`,
+      `Borrow`/`StorageLive`/`StorageDead`; CFG completo (`Goto`, `SwitchInt`,
+      `Return`); recursion y funciones con/sin retorno.
+- [x] El CFG se emite con un dispatch `block/loop/br_table` sobre un local `pc`
+      (los ids de bloque se mapean a su profundidad, porque el traductor
+      reordena por RPO). `SwitchInt` se resuelve con `select` encadenado.
+- [x] `print`/`eprint` eligen `print`, `print_f64` o `print_str` segun el tipo
+      BIR del argumento; conversiones `int()`/`float()`/`bool()` y
+      `drop`/`copy` soportadas.
+- [x] Strings constantes en memoria lineal (NUL-terminadas, deduplicadas por
+      valor, mismo layout que el backend AST).
+- [x] CLI: `minimc build|run <file> --bir`. El pipeline por defecto sigue
+      usando el backend desde AST hasta la paridad (6.2-6.4).
+- [x] Tipos compuestos/closures/`T?`/`T!` fallan con `BIRCodegenError`
+      explicito (nunca codegen silencioso).
+- [x] Corregido `ast_to_bir._lower_if`: las ramas de `if` como expresion
+      (`if c: 10 else: 20`) se traducen con `lower_into`; antes se pasaban a
+      `translate_suite` y la rama quedaba vacia en BIR.
+- [x] `Function.ret_type`/`Function.ret_local` en `borrowir/ir.py` (opcionales)
+      para que el codegen sepa la firma y de donde leer el valor de `Return`.
+
+### Tests Fase 6.1
+- `python3 -m tools.test_bir_codegen`: 10 casos (hello, enteros, floats y
+  casts, comparaciones/bits/logica, recursion, while/break/continue, match
+  escalar, if-expr, retorno `str`, cuerpo de modulo sin `main`).
+- `python3 minimc.py run examples/hello.mim --bir` imprime `hola, Minim`.
+- `examples/shapes.mim --bir` falla de forma explicita con
+  `no soporta el tipo 'struct' todavia`.
+- `test_core`, `test_ast_to_bir`, `test_parser`, `test_codegen`,
+  `test_encoder`, `test_struct` y los tests de babirusas siguen verdes.
 
 ## Notas
 - Borrow checker canonico: `babirusas/src/borrowir`.
-- `minimc.py` ya hace borrow check sobre BIR; el codegen sigue consumiendo el
-  AST hasta Fase 6.
+- `minimc.py` compila desde AST por defecto; `--bir` usa `tools/codegen_bir.py`
+  (fase 6.1, subset escalar) hasta que la paridad permita conmutar el pipeline.

@@ -49,7 +49,11 @@ Objetivo: implementar toda la especificacion de Minim 0.1, paso a paso, sin retr
 - [x] Diagnósticos con spans exactos.
 
 ## Fase 6: Codegen desde BIR -> WASM
-- [ ] Refactor WasmCodegen para consumir BIR.
+- [x] Backend BIR para el subset escalar (`tools/codegen_bir.py`): tipos, locales,
+      `Assign`/`Call`, CFG (`Goto`/`SwitchInt`/`Return`), funciones y recursion.
+- [ ] Paridad BIR de strings/list/tuple/struct/sumas/match (reutilizar layouts).
+- [ ] Paridad BIR de map/set, closures y `T?`/`T!`.
+- [ ] Conmutar el pipeline por defecto a BIR y retirar el codegen desde AST.
 - [ ] Soporte completo de tipos y operaciones.
 - [ ] Manejo de errores y opcionales.
 

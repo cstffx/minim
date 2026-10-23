@@ -20,7 +20,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 4. Core IR      -> `tools/core_ir.py`    -> `docs/CORE-IR.md` (desugars `for`->`while`, surface->reduced AST)
 5. Typecheck    -> `tools/typecheck.py`  -> `docs/DESIGN.md` §7 (types; phase 2b; no overload, structural typing)
 6. Borrow check -> `babirusas/src/borrowir` -> `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md` (NLL-style, intra-procedural)
-7. Codegen WASM -> `tools/codegen/`       -> `docs/COMPILACION.md` §2 (int/float-only MVP subset)
+7. Codegen WASM -> `tools/codegen/` (desde AST) + `tools/codegen_bir.py`
+                  (desde BIR, fase 6.1 escalar) -> `docs/COMPILACION.md` §2
 8. Encode       -> `tools/wasm_encoder.py` -> raw wasm binary sections (types/funcs/exports/code)
 - Also: `tools/index.py` implements fase-1 signature scan (`.mimidx`) per `docs/INDEXACION.md` / `docs/INDICE-LLM.md`.
 - `tools/measure.py`, `tools/micro.py`: token-cost measurement vs Python/Rust (needs `tiktoken`, not installed by default).
@@ -56,6 +57,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `python3 -m tools.test_parser` — parses every `.mim` in `examples/` + every python code-block embedded in `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md`, `docs/APRENDER-DEMOSTRACIONES.md`, `formal/CASES.md`.
   - `python3 -m tools.test_borrow` — crash-only conformance (does NOT check verdicts).
   - `python3 -m tools.test_cases_formal` — checks the borrow checker's actual RECHAZAR/ACEPTAR verdict against every canonical case in `formal/CASES.md`.
+  - `python3 -m tools.test_bir_codegen` — backend BIR (fase 6.1)
   - `python3 -m tools.test_codegen`
   - `python3 -m tools.test_encoder`
   - `python3 -m tools.test_struct`

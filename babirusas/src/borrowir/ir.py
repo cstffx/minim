@@ -124,6 +124,10 @@ class Function:
     locals: List[Local] = field(default_factory=list)
     blocks: List[Block] = field(default_factory=list)
     entry: int = 0
+    # Tipo de retorno y local donde el traductor deja el valor de `Return`.
+    # Opcionales para no romper funciones BIR construidas a mano.
+    ret_type: Optional[Type] = None
+    ret_local: Optional[str] = None
 
 
 def place_str(p: Place) -> str:

@@ -25,6 +25,7 @@ from tools.resolve import ResolveError
 from tools.typecheck import TC
 from tools.ast_to_bir import borrow_check_program
 from tools.codegen import WasmCodegen, CodegenError
+from tools.codegen_bir import BIRCodegen, BIRCodegenError
 
 
 class CompileFailure(Exception):
@@ -101,12 +102,16 @@ def cmd_build(args):
     source = open(args.file).read()
     try:
         program, tc = compile_pipeline(source, want_wasm=True, filename=args.file)
-        cg = WasmCodegen(program, tc)
-        wasm_bytes = cg.generate()
+        if args.bir:
+            from tools.ast_to_bir import translate_program
+            wasm_bytes = BIRCodegen(translate_program(program, tc)).generate()
+        else:
+            cg = WasmCodegen(program, tc)
+            wasm_bytes = cg.generate()
     except CompileFailure as f:
         _report(args.file, f)
         return 1
-    except CodegenError as e:
+    except (CodegenError, BIRCodegenError) as e:
         _report(args.file, CompileFailure("codegen", [str(e)]))
         return 1
 
@@ -141,6 +146,8 @@ def cmd_run(args):
     tmp = tempfile.NamedTemporaryFile(suffix=".wasm", delete=False)
     tmp.close()
     build_args = ["build", args.file, "-o", tmp.name]
+    if getattr(args, "bir", False):
+        build_args.append("--bir")
     # reuse cmd_build by calling main recursively
     rc = main(build_args)
     if rc != 0:
@@ -182,6 +189,8 @@ def main(argv=None):
     p_build = sub.add_parser("build", help="compile a .mim file to WebAssembly")
     p_build.add_argument("file")
     p_build.add_argument("-o", "--output", default=None, help="output .wasm path")
+    p_build.add_argument("--bir", action="store_true",
+                         help="usar el backend BIR (fase 6, subset escalar)")
     p_build.set_defaults(func=cmd_build)
 
     p_check = sub.add_parser("check", help="run parse/typecheck/borrow check only")
@@ -201,6 +210,7 @@ def main(argv=None):
 
     p_run = sub.add_parser("run", help="build and run a .mim file")
     p_run.add_argument("file")
+    p_run.add_argument("--bir", action="store_true", help="usar el backend BIR")
     p_run.set_defaults(func=cmd_run)
 
     args = ap.parse_args(argv)
