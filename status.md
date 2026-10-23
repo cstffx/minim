@@ -158,13 +158,43 @@ Actualizado automáticamente por los agentes (ver CLAUDE.md).
   `test_struct`, `minimc.py check examples/hello.mim` y
   `examples/shapes.mim`: pasan.
 
-## Fase 5: Borrow checker
-- [x] `babirusas` implementado (IR + borrow checker basico, 3 tests).
-- [ ] NLL completo y spans.
+## Fase 5: Borrow checker NLL (completada)
+- [x] `babirusas/src/borrowir/borrow.py`: analisis intra-procedural sobre el
+      CFG del BIR. Liveness hacia atras para los prestamos (terminan en su
+      ultimo uso) y analisis "may" de moves hacia adelante.
+- [x] Un valor, un dueño: mover al asignar/pasar salvo copiables. El traductor
+      marca las copias con `Rvalue("cast")`; los agregados y las llamadas a
+      parametros `move` mueven el valor.
+- [x] Prestamos compartidos (`&x`) y unicos (parametro/receptor `var`).
+      Exclusividad: un prestamo unico no convive con otros; los compartidos si.
+- [x] Modos de parametro `shared`/`unique`/`move` en `Param.mode`; mutar sin
+      `var` (local, campo o parametro) es error, y pasar a `var` exige que el
+      enlace del llamante sea `var`.
+- [x] Prestamos parciales por campo: `&p.x` no bloquea `p.y`, pero si `p.x`.
+- [x] Alias de referencias (`let r = &v; let s = r`): el prestamo vive
+      mientras viva cualquier copia, y las closures mantienen vivos los
+      locales que capturan.
+- [x] Drops implicitos: `StorageDead` de un dueño prestado es error si el
+      prestamo sigue vivo.
+- [x] Interaccion con `?`/`or` (retorno temprano), `match` (ramas con casts)
+      y closures (captura por prestamo; `move fn` por valor).
+- [x] Diagnostico `linea:columna: error` usando `Stmt.span`; sin span, mensaje
+      con el nombre del binding.
+- [x] Integrado en `minimc.py check`/`build` tras typecheck + elaboracion.
+
+### Tests Fase 5
+- `babirusas/tests/test_nll.py`: 7 casos puros de BIR (NLL, drop prestado,
+  copia vs move, modos de parametro, spans).
+- `python3 -m tools.test_ast_to_bir`: 9 casos nuevos de Fase 5 (NLL,
+  copias/moves, modos, mutabilidad, exclusividad/alias, campos, closures,
+  drop/retorno y spans).
+- Los 19 casos de `tools.test_core`, los 5 `examples/*.mim` y
+  `minimc.py check` pasan el borrow check. Los tests de Fase 1-4 siguen verdes.
 
 ## Fase 6: Codegen desde BIR
 - [ ] Pendiente.
 
 ## Notas
 - Borrow checker canonico: `babirusas/src/borrowir`.
-- `minimc.py` sigue compilando desde AST; el codegen desde BIR llega en Fase 6.
+- `minimc.py` ya hace borrow check sobre BIR; el codegen sigue consumiendo el
+  AST hasta Fase 6.

@@ -136,6 +136,22 @@ def to_type(t):
     return Type("unknown")
 
 
+def _param_mode(p):
+    """Modo de parametro de superficie -> modo BIR."""
+    return {"var": "unique", "move": "move"}.get(getattr(p, "mode", None), "shared")
+
+
+def _bir_copyable(ty):
+    """Copiabilidad segun el tipo BIR (conservador: structs no)."""
+    if ty is None:
+        return False
+    if ty.kind in ("i64", "f64", "bool", "str", "bytes", "unit", "ref", "func"):
+        return True
+    if ty.kind == "tuple":
+        return all(_bir_copyable(t) for _, t in ty.fields)
+    return False
+
+
 def _type_label(ty):
     """Nombre corto de un tipo del typechecker, para nombrar metodos."""
     if ty is None:
@@ -203,6 +219,8 @@ class Translator:
         self.owner = None        # tipo propietario si la funcion es un metodo
         self.ret_place = None
         self.ret_type = Type("unit")
+        self._span = None        # span de la sentencia en curso
+        self._initializing = set()  # locales que se estan inicializando
 
     # ---- infraestructura de bloques/locales ----
 
@@ -220,7 +238,7 @@ class Translator:
         return name
 
     def _new_temp(self, ty):
-        return _local(self._new_local(self._fresh("t"), to_type(ty)))
+        return _local(self._new_local(self._fresh("t"), to_type(ty), mutable=True))
 
     def _declare(self, name, ty, mutable=False):
         """Declara un enlace con nombre BIR unico y lo registra en el scope."""
@@ -256,6 +274,12 @@ class Translator:
         return self.fn.blocks[self.block]
 
     def _emit(self, stmt):
+        if getattr(stmt, "span", None) is None:
+            stmt.span = self._span
+        if (stmt.kind == "Assign" and stmt.place is not None
+                and stmt.place.kind == "local"
+                and stmt.place.name in self._initializing):
+            stmt.init = True
         self._block().stmts.append(stmt)
 
     def _new_block(self):
@@ -270,6 +294,8 @@ class Translator:
         return self._block().terminator is not None
 
     def _term(self, term):
+        if getattr(term, "span", None) is None:
+            term.span = self._span
         self._block().terminator = term
 
     def _goto(self, target):
@@ -367,6 +393,17 @@ class Translator:
         self.lower_into(tmp, e)
         return _use(tmp)
 
+    def _lower_value(self, e):
+        """Baja un valor copiando los tipos copiables.
+
+        El BIR no lleva tipos completos en los `Rvalue`; el `cast` explicito
+        distingue una copia de un move para el borrow checker.
+        """
+        rv = self.lower(e)
+        if rv.kind == "use" and self._copy_expr(e):
+            rv = Rvalue("cast", a=rv, cast_type=to_type(self._t(e)))
+        return rv
+
     def rvalue(self, e):
         """Devuelve un Rvalue, o None si `e` requiere control de flujo."""
         if isinstance(e, A.IntLit):
@@ -398,19 +435,19 @@ class Translator:
             return self._lower_borrow(e.operand)
         if isinstance(e, A.TupleExpr):
             return Rvalue("aggregate", agg_kind="tuple",
-                          items=[self.lower(x) for x in (e.items or [])])
+                          items=[self._lower_value(x) for x in (e.items or [])])
         if isinstance(e, A.ListExpr):
             return Rvalue("aggregate", agg_kind="list",
-                          items=[self.lower(self._arg_value(a)) for a in (e.items or [])])
+                          items=[self._lower_value(self._arg_value(a)) for a in (e.items or [])])
         if isinstance(e, A.SetExpr):
             return Rvalue("aggregate", agg_kind="set",
-                          items=[self.lower(self._arg_value(a)) for a in (e.items or [])])
+                          items=[self._lower_value(self._arg_value(a)) for a in (e.items or [])])
         if isinstance(e, A.MapExpr):
             items = []
             for a in (e.items or []):
                 if isinstance(a, A.Arg) and a.is_named and a.label is not None:
-                    items.append(self.lower(a.label))
-                items.append(self.lower(self._arg_value(a)))
+                    items.append(self._lower_value(a.label))
+                items.append(self._lower_value(self._arg_value(a)))
             return Rvalue("aggregate", agg_kind="map", items=items)
         if isinstance(e, (A.Lambda, A.MoveExpr)):
             return self._lower_lambda(e)
@@ -455,7 +492,7 @@ class Translator:
         target = self._new_temp(Type("ref", elem=place_type_guess(place), ref_kind=0))
         self._emit(Stmt("Borrow", place=place, borrow_kind="shared",
                         borrow_target=target.name))
-        return Rvalue("ref", ref_place=place, ref_kind="shared")
+        return _use(target)
 
     def place_of(self, e):
         """Convierte una expresion de lugar (nombre, campo, indice) en Place."""
@@ -533,12 +570,17 @@ class Translator:
             place, rv, symbol = tmp, None, None
             return tmp
 
-        for op in ops:
+        for oi, op in enumerate(ops):
             kind = op[0]
             if kind == "field":
                 fname = op[1]
+                is_method = oi + 1 < len(ops) and ops[oi + 1][0] == "call"
                 method_name = fname
                 subject_expr = state_expr
+                if is_method and place is not None:
+                    # `v.push(x)`: el receptor es `v`, no el campo `v.push`.
+                    state_expr = A.Postfix(state_expr, [op])
+                    continue
                 if place is not None:
                     place = _field(place, fname)
                 elif symbol is not None:
@@ -595,7 +637,7 @@ class Translator:
     def _lower_call(self, symbol, recv_place, call_expr, args, typeargs,
                     recv_expr, method_name=None):
         ret_ty = self._t(call_expr)
-        arg_rvs = [self.lower(self._arg_value(a)) for a in args]
+        arg_rvs = [self._lower_value(self._arg_value(a)) for a in args]
 
         if symbol is not None:
             # `mod.fn(...)`, `Tipo.Metodo(...)`, `Tipo.Variante(...)`,
@@ -680,26 +722,26 @@ class Translator:
         pi = 0
         for fname in field_names:
             if fname in named:
-                out.append(self.lower(named[fname]))
+                out.append(self._lower_value(named[fname]))
             elif pi < len(positional):
-                out.append(self.lower(positional[pi]))
+                out.append(self._lower_value(positional[pi]))
                 pi += 1
         while pi < len(positional):
-            out.append(self.lower(positional[pi]))
+            out.append(self._lower_value(positional[pi]))
             pi += 1
         return out
 
     def _product_ctor(self, type_name, args, call_expr):
         fields = self._field_order(type_name)
         items = self._ordered_args(fields, args) if fields else \
-            [self.lower(self._arg_value(a)) for a in args]
+            [self._lower_value(self._arg_value(a)) for a in args]
         return Rvalue("aggregate", agg_kind="struct", const_value=type_name,
                       items=items)
 
     def _variant_ctor(self, type_name, variant_name, args, call_expr):
         fields = self._field_order(type_name, variant_name)
         items = self._ordered_args(fields, args) if fields else \
-            [self.lower(self._arg_value(a)) for a in args]
+            [self._lower_value(self._arg_value(a)) for a in args]
         return Rvalue("aggregate", agg_kind="variant",
                       const_value=f"{type_name}.{variant_name}", items=items)
 
@@ -724,12 +766,29 @@ class Translator:
         lam = e.lambda_ if isinstance(e, A.MoveExpr) else e
         if not isinstance(lam, A.Lambda):
             raise NotImplementedError("closure no soportada")
+        move_closure = isinstance(e, A.MoveExpr)
         fn_name = f"{self.fn.name}$lambda{self._next_lambda()}"
         saved = (self.fn, self.block, self.scopes, self.decl_scopes,
-                 self.scope, self.ret_place, self.ret_type, self.loops)
+                 self.scope, self.ret_place, self.ret_type, self.loops,
+                 self._span, self._initializing)
 
         captures = self._captures(lam)
         owner_scope = self.scope
+
+        # Las capturas por prestamo se materializan como `Borrow` en el
+        # llamante; el agregado de la closure usa el temporal de referencia.
+        cap_specs = []
+        for name, bir, ty in captures:
+            if move_closure:
+                item = _use(_local(bir))
+                if _bir_copyable(ty):
+                    item = Rvalue("cast", a=item, cast_type=ty)
+                cap_specs.append((name, bir, ty, item))
+            else:
+                target = self._new_temp(Type("ref", elem=ty))
+                self._emit(Stmt("Borrow", place=_local(bir), borrow_kind="shared",
+                                borrow_target=target.name))
+                cap_specs.append((name, bir, ty, _use(target)))
 
         fn = Function(fn_name)
         self.fn = fn
@@ -738,17 +797,23 @@ class Translator:
         self.scopes = [{}]
         self.decl_scopes = [[]]
         self.loops = []
+        self._initializing = set()
         self.ret_type = to_type(self._t(lam.body))
-        self.ret_place = _local(self._new_local(self._fresh("ret"), self.ret_type))
+        self.ret_place = _local(self._new_local(self._fresh("ret"), self.ret_type,
+                                                mutable=True))
 
         for p in (lam.params or []):
             pty = _ast_type(p.type_) if p.type_ is not None else Type("unknown")
-            self.fn.params.append(Param(self._declare(p.name, pty, p.mode == "var"),
-                                        pty, p.mode == "var"))
+            mode = _param_mode(p)
+            mutable = p.mode == "var"
+            self.fn.params.append(Param(self._declare(p.name, pty, mutable),
+                                        pty, mutable, mode))
         cap_items = []
-        for name, bir, ty in captures:
-            self.fn.params.append(Param(self._declare(name, ty), ty, False))
-            cap_items.append(_use(_local(bir)))
+        for name, bir, ty, item in cap_specs:
+            pty = ty if move_closure else Type("ref", elem=ty)
+            mode = "move" if move_closure else "shared"
+            self.fn.params.append(Param(self._declare(name, pty), pty, False, mode))
+            cap_items.append(item)
 
         self.scope = owner_scope
         self.lower_into(self.ret_place, lam.body)
@@ -758,9 +823,11 @@ class Translator:
         self.functions.append(fn)
 
         (self.fn, self.block, self.scopes, self.decl_scopes,
-         self.scope, self.ret_place, self.ret_type, self.loops) = saved
-        return Rvalue("aggregate", agg_kind="closure", const_value=fn_name,
-                      items=cap_items)
+         self.scope, self.ret_place, self.ret_type, self.loops,
+         self._span, self._initializing) = saved
+        return Rvalue("aggregate",
+                      agg_kind="closure_move" if move_closure else "closure",
+                      const_value=fn_name, items=cap_items)
 
     def _next_lambda(self):
         self.counter += 1
@@ -810,15 +877,28 @@ class Translator:
             raise NotImplementedError(f"expresion no soportada: {type(e).__name__}")
         if rv.kind == "use" and self._copy_expr(e):
             # Asignar un tipo copiable copia el valor; un `use` a pelo haria
-            # que el borrow checker lo tratase como move (Fase 5 afinara esto).
+            # que el borrow checker lo tratase como move.
             rv = Rvalue("cast", a=rv, cast_type=to_type(self._t(e)))
+        if (rv.kind == "aggregate" and rv.agg_kind == "closure"
+                and dest is not None and dest.kind == "local"):
+            captures = [it.place.name for it in rv.items
+                        if it.kind == "use" and it.place is not None
+                        and it.place.kind == "local"]
+            loc = next((l for l in self.fn.locals if l.name == dest.name), None)
+            if loc is not None:
+                loc.captures = captures
         self._emit(Stmt("Assign", place=dest, rvalue=rv))
 
     def _copy_expr(self, e):
         if self.tc is None:
             return False
         try:
-            return self.tc.is_copy(self._t(e))
+            ty = self._t(e)
+            # Sin monomorfizar no se sabe si un `T` generico es copiable;
+            # tratarlo como copia evita falsos moves en funciones genericas.
+            if ty is not None and ty[0] in ("u", "var"):
+                return True
+            return self.tc.is_copy(ty)
         except Exception:
             return False
 
@@ -933,6 +1013,7 @@ class Translator:
         self.pop_scope()
 
     def translate_stmt(self, st, dest=None):
+        self._span = getattr(st, "span", None)
         if isinstance(st, (A.LetDecl, A.LetStmt, A.VarDecl, A.VarStmt)):
             mutable = isinstance(st, (A.VarDecl, A.VarStmt))
             if isinstance(st, A.LetDecl):
@@ -1035,7 +1116,11 @@ class Translator:
         ty = binding.type_ if getattr(binding, "type_", None) is not None else None
         bir_ty = _ast_type(ty) if ty is not None else self._bir_t(value)
         bir = self._declare(binding.name, bir_ty, mutable)
-        self.lower_into(_local(bir), value)
+        self._initializing.add(bir)
+        try:
+            self.lower_into(_local(bir), value)
+        finally:
+            self._initializing.discard(bir)
 
     def _bind_variant(self, binding, tmp, val_ty, mutable):
         type_name = val_ty[1] if val_ty is not None and val_ty[0] == "named" else None
@@ -1086,7 +1171,9 @@ class Translator:
         if isinstance(pat, A.Binding) and kind == "name":
             bir = self._declare(pat.name, to_type(ty) if ty is not None else Type("unknown"),
                                 mutable)
+            self._initializing.add(bir)
             self._emit(Stmt("Assign", place=_local(bir), rvalue=self._rebind(place, ty)))
+            self._initializing.discard(bir)
             return
         if isinstance(pat, A.Binding) and kind == "tuple":
             for i, p in enumerate(pat.tuple_patterns or []):
@@ -1105,7 +1192,9 @@ class Translator:
                 return
             bir = self._declare(pat.value, to_type(ty) if ty is not None else Type("unknown"),
                                 mutable)
+            self._initializing.add(bir)
             self._emit(Stmt("Assign", place=_local(bir), rvalue=self._rebind(place, ty)))
+            self._initializing.discard(bir)
             return
         if kind == "tuple":
             for i, p in enumerate(pat.patterns or []):
@@ -1501,7 +1590,8 @@ class _ProgramTranslator(Translator):
         name = fd.name if owner is None else f"{owner}.{fd.name}"
         fn = Function(name)
         saved = (self.fn, self.block, self.scopes, self.decl_scopes,
-                 self.scope, self.owner, self.ret_place, self.ret_type, self.loops)
+                 self.scope, self.owner, self.ret_place, self.ret_type,
+                 self.loops, self._span, self._initializing)
         self.fn = fn
         self.owner = owner
         fn.entry = 0
@@ -1510,9 +1600,11 @@ class _ProgramTranslator(Translator):
         self.scopes = [{}]
         self.decl_scopes = [[]]
         self.loops = []
+        self._initializing = set()
         self.ret_type = self._fn_ret_type(fd, owner)
         self.scope = self._func_scope(fd)
-        self.ret_place = _local(self._new_local(self._fresh("ret"), self.ret_type))
+        self.ret_place = _local(self._new_local(self._fresh("ret"), self.ret_type,
+                                                mutable=True))
 
         for p in (fd.params or []):
             if p.type_ is not None:
@@ -1523,7 +1615,7 @@ class _ProgramTranslator(Translator):
                 pty = Type("unknown")
             mutable = p.mode == "var"
             bir = self._declare(p.name, pty, mutable)
-            self.fn.params.append(Param(bir, pty, mutable))
+            self.fn.params.append(Param(bir, pty, mutable, _param_mode(p)))
 
         implicit = self.ret_type.kind not in ("unit", "unknown")
         self.translate_body(fd.body, self.ret_place if implicit else None)
@@ -1533,7 +1625,8 @@ class _ProgramTranslator(Translator):
         self.functions.append(fn)
 
         (self.fn, self.block, self.scopes, self.decl_scopes,
-         self.scope, self.owner, self.ret_place, self.ret_type, self.loops) = saved
+         self.scope, self.owner, self.ret_place, self.ret_type,
+         self.loops, self._span, self._initializing) = saved
 
     def _func_scope(self, fd):
         if self.tc is None:
@@ -1578,17 +1671,19 @@ def translate_function(fd, tc=None, owner=None):
     return fn
 
 
-def borrow_check_function(fn):
+def borrow_check_function(fn, functions=None):
     from babirusas.src.borrowir.borrow import BorrowChecker
-    return BorrowChecker().check(fn)
+    return BorrowChecker(functions).check(fn)
 
 
 def borrow_check_translated(prog, tc=None):
     """Traduce el programa y devuelve `(functions, errores)`."""
+    from babirusas.src.borrowir.borrow import BorrowChecker
     funcs = translate_program(prog, tc)
+    checker = BorrowChecker(funcs)
     errors = []
     for fn in funcs:
-        errors += [f"{fn.name}: {e}" for e in borrow_check_function(fn)]
+        errors += [f"{fn.name}: {e}" for e in checker.check(fn)]
     return funcs, errors
 
 

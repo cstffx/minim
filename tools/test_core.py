@@ -84,7 +84,7 @@ fn main()
 
     ("listas, mapas, sets y tuplas", """
 fn main()
-	let l = [1, 2, 3]
+	var l = [1, 2, 3]
 	l.push(4)
 	let m = {"a": 10, "b": 20}
 	let s = {1, 2, 2, 3}
@@ -197,21 +197,21 @@ fn main()
 
     ("colecciones: list, map, set y tuplas", """
 fn main()
-	let l = [3, 1, 2]
+	var l = [3, 1, 2]
 	l.sort()
 	print(f"{l[0]}{l[1]}{l[2]}")
 	let s = l.slice(0, 2)
 	print(s.len())
 	l.reverse()
 	print(l[1])
-	let m = {"a": 1, "b": 2}
+	var m = {"a": 1, "b": 2}
 	m.del("a")
 	print(m["b"])
 	let ks = m.keys()
 	print(ks[0])
 	let vs = m.values()
 	print(vs[0])
-	let st = {1, 2, 2}
+	var st = {1, 2, 2}
 	st.add(3)
 	st.remove(1)
 	print(st.len())

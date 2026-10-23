@@ -7,7 +7,10 @@ def test_conflicting_borrow():
     f = Function("t", [], [], [
       Block(0, [Stmt("StorageLive", Place("local","x")),
                 Stmt("Borrow", place=Place("local","x"), borrow_kind="mut", borrow_target="y"),
-                Stmt("Borrow", place=Place("local","x"), borrow_kind="shared", borrow_target="z")],
+                Stmt("Borrow", place=Place("local","x"), borrow_kind="shared", borrow_target="z"),
+                # `y` sigue vivo: el prestamo unico no ha terminado (NLL).
+                Stmt("Assign", place=Place("local","q"),
+                     rvalue=Rvalue("use", place=Place("local","y")))],
             Term("Return"))
     ], 0)
     assert BorrowChecker().check(f)

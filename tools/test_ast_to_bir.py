@@ -268,6 +268,190 @@ fn main()
     assert any("moved" in e for e in errs), errs
 
 
+def check(src):
+    prog, tc, errs = prepare(src)
+    assert errs == [], errs
+    return borrow_check_program(prog, tc)
+
+
+# ---------- Fase 5: borrow checker NLL ----------
+
+def test_fase5_nll_ultimo_uso():
+    assert check("""
+var v = [1, 2]
+let r = &v
+print(r)
+v.push(3)
+""") == []
+    errs = check("""
+var v = [1, 2]
+let r = &v
+v.push(3)
+print(r)
+""")
+    assert any("borrow" in e or "mutate" in e for e in errs), errs
+
+
+def test_fase5_copias_y_moves():
+    assert check("""
+type P
+	x: int
+	y: int
+let p = P(x: 1, y: 2)
+let q = p
+print(p.x + q.y)
+""") == []
+    errs = check("""
+type P
+	xs: [int]
+let p = P(xs: [1])
+let q = p
+print(p.xs.len)
+""")
+    assert any("moved" in e for e in errs), errs
+    assert check("""
+let a = [1]
+let b = copy(a)
+print(a.len + b.len)
+""") == []
+
+
+def test_fase5_modos_parametro():
+    assert check("""
+fn len(v: [int]) -> int
+	v.len
+let v = [1]
+print(len(v))
+print(v.len)
+""") == []
+    errs = check("""
+fn consume(move v: [int]) -> int
+	v.len
+let v = [1]
+print(consume(v))
+print(v.len)
+""")
+    assert any("moved" in e for e in errs), errs
+    errs = check("""
+fn push(var v: [int])
+	v.push(1)
+let v = [1]
+push(v)
+""")
+    assert any("unique" in e or "var" in e for e in errs), errs
+    assert check("""
+fn push(var v: [int])
+	v.push(1)
+var v = [1]
+push(v)
+print(v.len)
+""") == []
+
+
+def test_fase5_mutabilidad():
+    errs = check("""
+let a = 1
+a = 2
+""")
+    assert any("immutable" in e for e in errs), errs
+    assert check("""
+var a = 1
+a = 2
+print(a)
+""") == []
+    errs = check("""
+fn f(v: [int])
+	v.push(1)
+""")
+    assert any("var" in e or "unique" in e for e in errs), errs
+    errs = check("""
+type P
+	x: int
+fn f(p: P)
+	p.x = 1
+""")
+    assert any("immutable" in e for e in errs), errs
+
+
+def test_fase5_exclusividad_y_alias():
+    assert check("""
+var v = [1]
+let a = &v
+let b = &v
+print(a)
+print(b)
+""") == []
+    errs = check("""
+var v = [1]
+let r = &v
+let s = r
+v.push(3)
+print(s)
+""")
+    assert any("borrow" in e or "mutate" in e for e in errs), errs
+
+
+def test_fase5_prestamos_por_campo():
+    assert check("""
+type P
+	x: int
+	y: int
+var p = P(x: 1, y: 2)
+let r = &p.x
+p.y = 3
+print(r)
+""") == []
+    errs = check("""
+type P
+	x: int
+	y: int
+var p = P(x: 1, y: 2)
+let r = &p.x
+p.x = 3
+print(r)
+""")
+    assert any("borrow" in e or "write" in e for e in errs), errs
+
+
+def test_fase5_closures():
+    assert check("""
+let base = 1
+let f = fn x: int => x + base
+print(f(2))
+""") == []
+    errs = check("""
+var base = 1
+let f = fn x: int => x + base
+base = 2
+print(f(0))
+""")
+    assert any("borrow" in e for e in errs), errs
+
+
+def test_fase5_drop_y_retorno():
+    errs = check("""
+let a = [1]
+drop(a)
+print(a.len)
+""")
+    assert any("moved" in e for e in errs), errs
+    errs = check("""
+fn f() -> &[int]
+	let v = [1]
+	&v
+""")
+    assert any("return" in e and "borrow" in e for e in errs), errs
+
+
+def test_fase5_diagnostico_con_span():
+    errs = check("""
+let a = [1]
+let b = a
+print(a.len)
+""")
+    assert any(":4:1:" in e or "4:1:" in e for e in errs), errs
+
+
 def main():
     cases = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -38,15 +38,15 @@ Objetivo: implementar toda la especificacion de Minim 0.1, paso a paso, sin retr
 - [x] Integrar con babirusas (borrow check).
 
 ## Fase 5: Borrow checker completo (NLL)
-- [ ] Un valor, un dueño; move al asignar/pasar (salvo copiables).
-- [ ] Préstamos compartidos (`&x`) y únicos (`var x` en firma).
-- [ ] Modos de parámetro: compartido/unico/move; mutar sin `var` es error.
-- [ ] Exclusividad: `&mut` exclusivo; `&` permite múltiples lectores.
-- [ ] Préstamos parciales por campo.
-- [ ] NLL: préstamo vive hasta último uso del target.
-- [ ] Drops implícitos al salir de scope (StorageDead).
-- [ ] Interacción con errores (`?`/`or`), match y closures.
-- [ ] Diagnósticos con spans exactos.
+- [x] Un valor, un dueño; move al asignar/pasar (salvo copiables).
+- [x] Préstamos compartidos (`&x`) y únicos (`var x` en firma).
+- [x] Modos de parámetro: compartido/unico/move; mutar sin `var` es error.
+- [x] Exclusividad: `&mut` exclusivo; `&` permite múltiples lectores.
+- [x] Préstamos parciales por campo.
+- [x] NLL: préstamo vive hasta último uso del target.
+- [x] Drops implícitos al salir de scope (StorageDead).
+- [x] Interacción con errores (`?`/`or`), match y closures.
+- [x] Diagnósticos con spans exactos.
 
 ## Fase 6: Codegen desde BIR -> WASM
 - [ ] Refactor WasmCodegen para consumir BIR.

@@ -77,6 +77,8 @@ class Stmt:
     call_args: List[Rvalue] = field(default_factory=list)
     call_dest: Optional[Place] = None
     call_target: Optional[int] = None
+    span: Optional[Any] = None
+    init: bool = False
 
 
 @dataclass
@@ -86,6 +88,7 @@ class Term:
     discr: Optional[Rvalue] = None
     cases: List[tuple] = field(default_factory=list)
     otherwise: Optional[int] = None
+    span: Optional[Any] = None
 
 
 @dataclass
@@ -100,6 +103,8 @@ class Param:
     name: str
     type: Type
     mutable: bool = False
+    mode: Optional[str] = None   # "shared" (por defecto), "unique" o "move"
+    span: Optional[Any] = None
 
 
 @dataclass
@@ -107,6 +112,9 @@ class Local:
     name: str
     type: Type
     mutable: bool = False
+    span: Optional[Any] = None
+    # Locales de referencia que mantiene viva una closure capturada.
+    captures: List[str] = field(default_factory=list)
 
 
 @dataclass

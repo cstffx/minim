@@ -23,6 +23,7 @@ from tools.core_ir import elaborate
 from tools.modules import load_modules, ModuleError
 from tools.resolve import ResolveError
 from tools.typecheck import TC
+from tools.ast_to_bir import borrow_check_program
 from tools.codegen import WasmCodegen, CodegenError
 
 
@@ -74,7 +75,14 @@ def compile_pipeline(source, want_wasm, filename=None):
     if type_errors:
         raise CompileFailure("typecheck", [str(e) for e in type_errors])
 
-    # borrow check (babirusas) pendiente de integracion AST->BIR
+    # Borrow check sobre el BIR traducido (babirusas).
+    try:
+        borrow_errors = borrow_check_program(program, tc)
+    except Exception as e:
+        raise CompileFailure("borrow", [str(e)])
+    if borrow_errors:
+        raise CompileFailure("borrow", borrow_errors)
+
     return program, tc
 
 

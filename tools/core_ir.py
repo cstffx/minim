@@ -64,7 +64,7 @@ def _desugar_indexed(st, source_expr, body_stmts, mode):
     out = [
         # Iterate by borrow, not by move: `for x in v` must not consume `v`.
         LetStmt([Binding("name", it_name)], BorrowExpr(source_expr)),
-        LetStmt([Binding("name", idx_name)], IntLit("0")),
+        VarStmt([Binding("name", idx_name)], IntLit("0")),
     ]
     cond = BinOp("<", NameExpr(idx_name), _field(NameExpr(it_name), "len"))
     loop_body = []
@@ -92,10 +92,13 @@ def _desugar_indexed(st, source_expr, body_stmts, mode):
     # that don't reference it directly (e.g. mutating the owner, which
     # must be rejected while the iteration borrow is alive).
     loop_body.append(ExprStmt(NameExpr(it_name)))
-    loop_body.append(Assign(Place(idx_name, []), "+=", IntLit("1")))
+    inc = Assign(Place(idx_name, []), "+=", IntLit("1"))
+    inc._for_continue = True
+    loop_body.append(inc)
     loop_stmt = WhileStmt(cond, Suite(loop_body))
-    # `continue` in a `for` must still run the loop increment. Codegen uses
-    # this marker to wrap the user body in a block that continue targets.
+    # `continue` in a `for` must still run the loop increment. Codegen usa
+    # este contador; se recalcula al final del desazucarado porque un `for`
+    # anidado puede expandirse a varias sentencias.
     loop_stmt._for_continue_count = len(loop_body) - 2
     out.append(loop_stmt)
     return out
@@ -120,11 +123,13 @@ def desugar_for_stmt(st, tc=None, scope=None):
                 break
         if varname is None:
             varname = _fresh("i")
-        # let var = left
-        out = [LetStmt([Binding("name", varname)], it.left)]
+        # var i = left (el incremento del bucle la reasigna)
+        out = [VarStmt([Binding("name", varname)], it.left)]
         # while var < right (or <=)
         cond = BinOp("<=" if inclusive else "<", NameExpr(varname), it.right)
-        loop_body = list(body_stmts) + [Assign(Place(varname, []), "+=", IntLit("1"))]
+        inc = Assign(Place(varname, []), "+=", IntLit("1"))
+        inc._for_continue = True
+        loop_body = list(body_stmts) + [inc]
         loop_stmt = WhileStmt(cond, Suite(loop_body))
         # `continue` debe ejecutar el incremento antes de repetir.
         loop_stmt._for_continue_count = len(body_stmts)
@@ -318,6 +323,32 @@ def _desugar_stmt_exprs(st, tc=None):
             _desugar_suite(es, tc)
         st.elifs = new_elifs
 
+def _fix_continue_counts(stmts):
+    """Recalcula el indice del incremento tras expandir `for` anidados."""
+    for st in stmts:
+        if isinstance(st, WhileStmt):
+            if hasattr(st, "_for_continue_count"):
+                idx = next((i for i, s in enumerate(st.body.stmts)
+                            if getattr(s, "_for_continue", False)), None)
+                if idx is not None:
+                    st._for_continue_count = idx
+            _fix_continue_counts(st.body.stmts)
+        elif isinstance(st, IfStmt):
+            if st.then is not None:
+                _fix_continue_counts(st.then.stmts)
+            for _, es in (st.elifs or []):
+                _fix_continue_counts(es.stmts)
+            if st.else_ is not None:
+                _fix_continue_counts(st.else_.stmts)
+        elif isinstance(st, FnDecl):
+            if st.body is not None:
+                _fix_continue_counts(st.body.stmts)
+        elif isinstance(st, TypeDecl):
+            for m in (st.members or []):
+                if isinstance(m.node, FnDecl) and m.node.body is not None:
+                    _fix_continue_counts(m.node.body.stmts)
+
+
 def _desugar_suite(suite, tc=None):
     if not hasattr(suite, "stmts"):
         return
@@ -348,6 +379,7 @@ def _desugar_suite(suite, tc=None):
             for m in (st.members or []):
                 if isinstance(m.node, FnDecl) and m.node.body is not None:
                     _desugar_suite(m.node.body, tc)
+    _fix_continue_counts(new)
     suite.stmts = new
 
 
