@@ -7,15 +7,29 @@ Actualizado: 2026-10-23. Solo pendientes; lo completado vive en `status.md`.
 El compilador debe exponer solo primitivas de bajo nivel; strings, listas y colecciones
 deben vivir en una biblioteca estándar compilada con el mismo pipeline.
 
-- [ ] Intrínsecos de memoria: `alloc(n)`, `dealloc(p)`, `memcpy(dst, src, n)`,
-      `memset(p, v, n)`, `load<T>(p, off)`, `store<T>(p, off, v)`.
-- [ ] Intrínsecos aritméticos/bitwise y conversiones por ancho (i8/u32/f32, …).
+- [ ] Intrínseco `alloc(n: int) -> ptr` (bump o allocator real).
+- [ ] Intrínseco `dealloc(p: ptr)`.
+- [ ] Intrínseco `memcpy(dst: ptr, src: ptr, n: int)`.
+- [ ] Intrínseco `memset(p: ptr, v: int, n: int)`.
+- [ ] Intrínseco `load<T>(p: ptr, off: int) -> T` para T = i8/u8/i16/u16/i32/u32/i64/u64/f32/f64/ptr/bool.
+- [ ] Intrínseco `store<T>(p: ptr, off: int, v: T)`.
+- [ ] Tipo `ptr` (puntero crudo) en el typechecker y en BIR.
+- [ ] Aritmética de punteros: `ptr + int`, `ptr - int`, `ptr - ptr`.
+- [ ] Intrínsecos aritméticos por ancho: `add_i8`, `sub_u32`, … (o operadores tipados).
+- [ ] Conversiones por ancho: `trunc`, `sext`, `zext`, `ftrunc`, `fext`.
+- [ ] Saturación/truncado real en codegen para i8/u32/f32/… .
 - [ ] `drop`/`copy` como operaciones primitivas del borrow checker, no del codegen.
-- [ ] ABI estable para llamadas a funciones de biblioteca (punteros, retornos).
-- [ ] Mover los helpers de str (`__str_concat`, `__str_len`, `__to_str_*`) a una
-      crate `std` compilable, eliminando `_ensure_str_helpers` del codegen.
-- [ ] Mover `list.push`/`get`/`slice`/`len` a `std` sobre las primitivas anteriores.
-- [ ] Retirar los builtins hardcodeados de `codegen_bir` una vez exista la std.
+- [ ] ABI estable para llamadas a funciones de biblioteca (punteros, retornos, convención).
+- [ ] Mover `__str_concat` a `std`.
+- [ ] Mover `__str_len` a `std`.
+- [ ] Mover `__to_str_i64` a `std`.
+- [ ] Mover `__to_str_f64` a `std`.
+- [ ] Mover `list.push` a `std`.
+- [ ] Mover `list.get` a `std`.
+- [ ] Mover `list.slice` a `std`.
+- [ ] Mover `list.len` a `std`.
+- [ ] Retirar `_ensure_str_helpers` del codegen.
+- [ ] Retirar builtins de listas del codegen.
 
 ## 1. Fase 6: codegen desde BIR
 
