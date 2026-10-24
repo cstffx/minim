@@ -195,107 +195,6 @@ class TranslatorCore:
         self.lower_into(tmp, e)
         return _use(tmp)
 
-    def _lower_fstr(self, e):
-        from tools.parser import parse as _parse
-        from tools.lexer import decode_escapes
-        raw = e.value
-        parts = []
-        buf = []
-        i = 0
-        n = len(raw)
-        while i < n:
-            c = raw[i]
-            if c == "{" and i + 1 < n and raw[i + 1] == "{":
-                buf.append("{")
-                i += 2
-                continue
-            if c == "}" and i + 1 < n and raw[i + 1] == "}":
-                buf.append("}")
-                i += 2
-                continue
-            if c == "{":
-                if buf:
-                    parts.append(("lit", decode_escapes("".join(buf))))
-                    buf = []
-                depth = 1
-                j = i + 1
-                quote = None
-                while j < n and depth:
-                    ch = raw[j]
-                    if quote:
-                        if ch == "\\\\":
-                            j += 2
-                            continue
-                        if ch == quote:
-                            quote = None
-                    elif ch in ("'", '"'):
-                        quote = ch
-                    elif ch in "([{":
-                        depth += 1
-                    elif ch in ")]}":
-                        depth -= 1
-                        if depth == 0:
-                            break
-                    j += 1
-                if depth != 0:
-                    buf.append(c)
-                    i += 1
-                    continue
-                inner = raw[i + 1:j]
-                fmt = None
-                d = 0
-                q = None
-                for k, ch in enumerate(inner):
-                    if q:
-                        if ch == "\\\\":
-                            continue
-                        if ch == q:
-                            q = None
-                    elif ch in ("'", '"'):
-                        q = ch
-                    elif ch in "([{":
-                        d += 1
-                    elif ch in ")]}":
-                        d -= 1
-                    elif ch == ":" and d == 0:
-                        fmt = inner[k + 1:]
-                        inner = inner[:k]
-                        break
-                parts.append(("expr", fmt, inner.strip()))
-                i = j + 1
-                continue
-            buf.append(c)
-            i += 1
-        if buf:
-            parts.append(("lit", decode_escapes("".join(buf))))
-
-        # Construir Rvalue concatenado.
-        acc = None
-        for part in parts:
-            if part[0] == "lit":
-                rv = _const(Type("str"), part[1])
-            else:
-                _fmt, inner = part[1], part[2]
-                try:
-                    prog = _parse(inner)
-                    ex = prog.stmts[0].expr
-                except Exception:
-                    ex = None
-                if ex is None:
-                    rv = _const(Type("str"), "")
-                else:
-                    rv = self.lower(ex)
-                    if rv is None:
-                        rv = _const(Type("str"), "")
-                    rv = Rvalue("cast", a=rv, cast_type=Type("str"))
-                if acc is None:
-                    acc = rv
-                else:
-                    acc = Rvalue("binop", op="+", a=acc, b=rv)
-        if acc is None:
-            acc = _const(Type("str"), "")
-        return acc
-
     def _lower_value(self, e):
         """Baja un valor copiando los tipos copiables.
 
@@ -316,10 +215,8 @@ class TranslatorCore:
                 return _const(Type("f64"), float(str(e.value).replace("_", "")))
             except ValueError:
                 return _const(Type("f64"), 0.0)
-        if isinstance(e, (A.StrLit, A.RStrLit, A.MlStrLit)):
+        if isinstance(e, (A.StrLit, A.RStrLit, A.MlStrLit, A.FStrLit)):
             return _const(Type("str"), e.value)
-        if isinstance(e, A.FStrLit):
-            return self._lower_fstr(e)
         if isinstance(e, A.BytesLit):
             return _const(Type("bytes"), e.value)
         if isinstance(e, A.BoolLit):
