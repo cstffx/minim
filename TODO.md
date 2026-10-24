@@ -39,65 +39,52 @@ el borrow check y `WasmCodegen` consume el AST. Falta:
 - [ ] 6.2 Paridad de tipos compuestos en BIR (pendientes 6.2.2-6.2.8).
       Los stubs de `tools/codegen_bir/` (`layouts`, `aggregates`, `places`, `rvalues`,
       `calls`, `cfg`) ya existen: cada subtarea rellena el suyo y `legacy.py` queda como
-      fallback hasta 6.4. Criterio de cierre de 6.2: `hello`, `shapes` y `borrow` dan el
+      fallback hasta 6.4. Criterio de cierre de 6.2: `hello` y `shapes` dan el
       mismo stdout por `minimc run` y `minimc run --bir`, comparado byte a byte.
 
-  - [x] 6.2.2 Agregados y memoria lineal. `aggregates.py`: allocator bump-pointer
-        compartido (extraído de `tools/codegen/expr/ctors.py`) y
-        `Rvalue("aggregate")` para `tuple`, `list`, `struct` y `variant`.
-        Desajuste `items=`/`agg_fields` resuelto en la IR de babirusas y en
-        `tools/bir.py` (ambos nombres aceptados; `items` es el canónico).
-        Aceptación: `(1, 2)` y `P(1, 2)` se crean, se pasan por parámetro y se devuelven
-        sin acceder a campos; dos instancias no comparten memoria.
-
-  - [x] 6.2.3 Lectura de places proyectados. `places.py`: `_place_type` y
-        `_gen_place_get` para `FIELD`/`INDEX` y proyecciones anidadas (`a.b[i].c`), con
-        load i32/i64/f64 según `wasm_repr` y alineación 8.
-        Aceptación: `print(t.0)`, `print(p.b)`, `print(xs[1])`, `print(xs[1].a)`.
-
-  - [x] 6.2.4 Escritura de places proyectados. `places.py`: `_gen_place_set` para
-        `FIELD`/`INDEX`, anidados y campos de `self` sin cualificar.
-        Aceptación: `p.a = 5`, `xs[0] = 7`, `p.inner.x = 1` se leen de vuelta.
-
-  - [x] 6.2.5 Strings dinámicos (puente temporal en codegen; migrar a std). `rvalues.py`: extraer `_ensure_str_helpers`
-        (len/concat/eq/cmp) de `expr/legacy.py` a un módulo sin dependencia del AST;
-        `_gen_binop` para `str` (`+`, `==`, `!=`, `<`, …); `_storage_wt` devuelve i32.
-        Verificar `FStrLit` (hoy se baja como str plano en `ast_to_bir.py:416`) y
-        convertirla en concatenación si `core_ir` no lo hace antes.
-        Aceptación: concatenar dentro de un bucle, comparar y `print` del resultado;
-        `f"{x}"` imprime el valor interpolado.
-
-  - [x] 6.2.6 Match sobre sumas. `unaryop tag` en `_rv_type`/`_gen_unaryop` y bindings
-        como lecturas de `FIELD` sobre el payload; completar `_pattern_test` de
-        `ast_to_bir.py` para que `named_field` y `tuple` dejen de ser catch-all.
-        Aceptación: `case Circle(r): print(r)` usando el binding, patrón anidado y
-        guarda.
-
-  - [x] 6.2.7 Llamadas con tipos compuestos (builtins de colecciones temporales; migrar a std). `calls.py`: `Call` a métodos (`Tipo.m`),
-        builtins de colecciones (`push`, `get`, `slice`, `len`) y funciones que
-        reciben/devuelven punteros, incluyendo `func_index` de métodos monomorfizados.
-        Aceptación: `p.move()` muta el receptor, `xs.push(4)`, `print(xs.len)`.
-
-  - [ ] 6.2.8 Paridad AST vs BIR. `tools/test_bir_parity.py`: compila cada
-        `examples/*.mim` por ambas rutas y compara stdout byte a byte, con skip explícito
-        y listado para lo que siga en 6.3. Ampliar `tools/test_bir_codegen.py` con los
-        casos de 6.2.2-6.2.7.
-        Aceptación: `hello`, `shapes` y `borrow` idénticos; `http` y `wordcount` fallan
-        de forma declarada, nunca en silencio.
+  - [ ] 6.2.8 Paridad AST vs BIR (solo `hello`, `shapes`).
+        - [ ] Crear `tools/test_bir_parity.py` que compile cada ejemplo por ambas rutas
+              y compare stdout byte a byte.
+        - [ ] Añadir skips explícitos y listado para lo que siga en 6.3.
+        - [ ] Ampliar `tools/test_bir_codegen.py` con casos de `shapes` (tag unaryop,
+              match sobre sumas, métodos).
+        - [ ] Implementar `unaryop tag` en `codegen_bir` (legacy `_gen_unaryop` o mixin)
+              para que `shapes` compile por BIR.
+        - [ ] Aceptación: `hello` y `shapes` idénticos byte a byte; sin fallos silenciosos.
 
 - [ ] 6.3 Paridad BIR de `map`/`set`, closures y `T?`/`T!`.
-- [ ] 6.4 Conmutar el pipeline por defecto a BIR y retirar el codegen desde AST cuando
-      `test_core` + los 5 ejemplos pasen por la ruta BIR (comparación byte a byte del output).
+  - [ ] 6.3.1 `map`/`set` aggregate layout en `codegen_bir/aggregates.py`
+        (header + buckets, como listas).
+  - [ ] 6.3.2 Métodos de `map`/`set` en BIR: `get`, `insert`, `remove`, `len`,
+        `contains` (dispatch `Tipo.m`).
+  - [ ] 6.3.3 Iteración `for` sobre `map`/`set` en BIR (desazúcar a while).
+  - [ ] 6.3.4 Closures en BIR: tabla de funciones + `call_indirect` (o llamada por índice)
+        y capturas por préstamo/move.
+  - [ ] 6.3.5 `T?`/`T!` en BIR: tag + payload, `is_some`/`is_ok`, `err_msg`, `?`.
+  - [ ] 6.3.6 Pruebas de runtime para map/set/closures/option/result en BIR.
+- [ ] 6.4 Conmutar el pipeline por defecto a BIR y retirar el codegen desde AST.
+  - [ ] 6.4.1 Hacer que `minimc build`/`run` usen BIR por defecto.
+  - [ ] 6.4.2 Mantener `--ast` como fallback temporal.
+  - [ ] 6.4.3 Eliminar `WasmCodegen` cuando `hello` y `shapes` sean idénticos por ambas rutas.
+  - [ ] 6.4.4 Actualizar docs y tests que asumen codegen AST.
 
 ## 2. Gaps de codegen (ruta AST actual)
 
-- [ ] `.insert(i, x)` / `.remove(i)` en listas (typecheck rechaza su aridad; §4).
-- [ ] Argumentos con nombre en llamadas a funciones libres (`f(b: 2, a: 1)`); solo se
-      reordenan en constructores de producto.
-- [ ] Préstamos que escapan del caso trivial (`&campo`, `&lista[i]` materializando
-      dirección) — hoy `&x` no genera código.
-- [ ] Truncado/saturación real por ancho (`i8`, `u32`, `f32`, …).
-- [ ] `T?` sin tag: un `0` legítimo es indistinguible de `nil` (limitación documentada).
+- [ ] `.insert(i, x)` / `.remove(i)` en listas.
+  - [ ] Ajustar typecheck para aceptar aridad (§4).
+  - [ ] Implementar en codegen AST y BIR.
+- [ ] Argumentos con nombre en llamadas a funciones libres (`f(b: 2, a: 1)`).
+  - [ ] Reordenar argumentos en `_lower_call`/codegen AST, no solo en ctors.
+- [ ] Préstamos que escapan del caso trivial.
+  - [ ] `&campo` materializando dirección.
+  - [ ] `&lista[i]` materializando dirección.
+  - [ ] Codegen para `BorrowExpr` más allá de temporales.
+- [ ] Truncado/saturación real por ancho.
+  - [ ] `i8`/`u8`/`i16`/`u16` en codegen.
+  - [ ] `u32`/`i32` signedness.
+  - [ ] `f32` (si se añade) o documentar solo f64.
+- [ ] `T?` sin tag.
+  - [ ] Documentar limitación o añadir tag en layout.
 
 ## 3. Métodos de `str` (`docs/DESIGN.md` §10)
 
@@ -154,14 +141,12 @@ antes de generar las llamadas.
 
 | Ejemplo | Falla en | Sección |
 |---|---|---|
-| `examples/http.mim` | `net`/`json` del prelude | §5 |
-| `examples/wordcount.mim` | `fs.read`/`env.arg` y `.strip()` | §3, §5 |
+| `examples/shapes.mim` | `tag` unaryop en codegen BIR | §1 (6.2.8) |
 
 ## 10. Orden sugerido
 
-1. `.lines`/`.split`/`.strip` (§3) → deja `wordcount.mim` a un paso.
-2. Contrato host + `fs`/`env` → `wordcount.mim` compila.
-3. `net`/`json` → `http.mim` compila.
-4. `.insert(i, x)`/`.remove(i)` en listas y resto de §4 (paridad de colecciones).
-5. Paridad BIR completa (§1, 6.2-6.4) y conmutar el pipeline.
-6. Formal, benchmarks y detalles finos.
+1. Implementar `tag` unaryop en codegen BIR → `shapes` compila por BIR.
+2. Paridad AST vs BIR para `hello`/`shapes` (§1, 6.2.8).
+3. Conmutar pipeline a BIR (§1, 6.4).
+4. Primitivas de memoria y `ptr` (§0).
+5. Formal, benchmarks y detalles finos.
