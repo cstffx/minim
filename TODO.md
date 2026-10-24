@@ -2,6 +2,21 @@
 
 Actualizado: 2026-10-23. Solo pendientes; lo completado vive en `status.md`.
 
+## 0. Prioridad: primitivas para construir la std (en lugar de builtins en el codegen)
+
+El compilador debe exponer solo primitivas de bajo nivel; strings, listas y colecciones
+deben vivir en una biblioteca estándar compilada con el mismo pipeline.
+
+- [ ] Intrínsecos de memoria: `alloc(n)`, `dealloc(p)`, `memcpy(dst, src, n)`,
+      `memset(p, v, n)`, `load<T>(p, off)`, `store<T>(p, off, v)`.
+- [ ] Intrínsecos aritméticos/bitwise y conversiones por ancho (i8/u32/f32, …).
+- [ ] `drop`/`copy` como operaciones primitivas del borrow checker, no del codegen.
+- [ ] ABI estable para llamadas a funciones de biblioteca (punteros, retornos).
+- [ ] Mover los helpers de str (`__str_concat`, `__str_len`, `__to_str_*`) a una
+      crate `std` compilable, eliminando `_ensure_str_helpers` del codegen.
+- [ ] Mover `list.push`/`get`/`slice`/`len` a `std` sobre las primitivas anteriores.
+- [ ] Retirar los builtins hardcodeados de `codegen_bir` una vez exista la std.
+
 ## 1. Fase 6: codegen desde BIR
 
 El pipeline sigue compilando desde el AST elaborado; `minimc build` traduce a BIR solo para
@@ -30,7 +45,7 @@ el borrow check y `WasmCodegen` consume el AST. Falta:
         `FIELD`/`INDEX`, anidados y campos de `self` sin cualificar.
         Aceptación: `p.a = 5`, `xs[0] = 7`, `p.inner.x = 1` se leen de vuelta.
 
-  - [x] 6.2.5 Strings dinámicos. `rvalues.py`: extraer `_ensure_str_helpers`
+  - [x] 6.2.5 Strings dinámicos (puente temporal en codegen; migrar a std). `rvalues.py`: extraer `_ensure_str_helpers`
         (len/concat/eq/cmp) de `expr/legacy.py` a un módulo sin dependencia del AST;
         `_gen_binop` para `str` (`+`, `==`, `!=`, `<`, …); `_storage_wt` devuelve i32.
         Verificar `FStrLit` (hoy se baja como str plano en `ast_to_bir.py:416`) y
@@ -44,7 +59,7 @@ el borrow check y `WasmCodegen` consume el AST. Falta:
         Aceptación: `case Circle(r): print(r)` usando el binding, patrón anidado y
         guarda.
 
-  - [x] 6.2.7 Llamadas con tipos compuestos. `calls.py`: `Call` a métodos (`Tipo.m`),
+  - [x] 6.2.7 Llamadas con tipos compuestos (builtins de colecciones temporales; migrar a std). `calls.py`: `Call` a métodos (`Tipo.m`),
         builtins de colecciones (`push`, `get`, `slice`, `len`) y funciones que
         reciben/devuelven punteros, incluyendo `func_index` de métodos monomorfizados.
         Aceptación: `p.move()` muta el receptor, `xs.push(4)`, `print(xs.len)`.
