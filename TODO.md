@@ -44,7 +44,7 @@ el borrow check y `WasmCodegen` consume el AST. Falta:
         Aceptación: `case Circle(r): print(r)` usando el binding, patrón anidado y
         guarda.
 
-  - [ ] 6.2.7 Llamadas con tipos compuestos. `calls.py`: `Call` a métodos (`Tipo.m`),
+  - [x] 6.2.7 Llamadas con tipos compuestos. `calls.py`: `Call` a métodos (`Tipo.m`),
         builtins de colecciones (`push`, `get`, `slice`, `len`) y funciones que
         reciben/devuelven punteros, incluyendo `func_index` de métodos monomorfizados.
         Aceptación: `p.move()` muta el receptor, `xs.push(4)`, `print(xs.len)`.

@@ -57,6 +57,12 @@ class BIRPlacesMixin:
                     if fname == place.field:
                         return fty
                 return None
+            elif base_ty.kind == "list":
+                if place.field == "len" or place.field == "cap":
+                    return Type("i64")
+                if place.field == "data":
+                    return base_ty
+                return None
             else:
                 return None
         elif place.kind == "index":
@@ -112,6 +118,14 @@ class BIRPlacesMixin:
                         base_code = self._gen_place_get(place.base)
                         return base_code + self._load_field(field_ty, off)
                 self._fail(f"campo '{place.field}' no existe en tupla")
+
+            elif base_ty.kind == "list":
+                base_code = self._gen_place_get(place.base)
+                if place.field == "len" or place.field == "cap":
+                    return base_code + _i32_load(0 if place.field == "len" else 4) + bytes([0xAC])
+                if place.field == "data":
+                    return base_code + _i32_load(8)
+                self._fail(f"campo '{place.field}' no existe en lista")
 
             else:
                 self._fail(f"acceso a campo en tipo '{base_ty.kind}' no soportado")
