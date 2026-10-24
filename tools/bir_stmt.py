@@ -92,7 +92,17 @@ class StmtMixin:
         self.lower_into(tmp, e)
 
     def _place_from_spec(self, spec):
-        base = _local(self._lookup(spec.name))
+        if spec.name in ("self",):
+            base = _local(self._lookup("self"))
+        elif spec.name in ("it",):
+            base = _local(self._lookup("it"))
+        elif (self.owner is not None
+              and not any(spec.name in sc for sc in self.scopes)
+              and not any(l.name == spec.name for l in (self.fn.locals if self.fn else []))
+              and self._is_owner_field(spec.name)):
+            base = _field(_local(self._lookup("self")), spec.name)
+        else:
+            base = _local(self._lookup(spec.name))
         for part in (spec.parts or []):
             if part[0] == "field":
                 base = _field(base, part[1])

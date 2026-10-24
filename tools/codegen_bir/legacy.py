@@ -236,7 +236,7 @@ class BIRCodegenLegacy:
             self._fail(f"lectura de place '{place.kind}' no soportada en 6.1")
         return local_get(self._local_idx(place.name))
 
-    def _gen_place_set(self, place, value_code):
+    def _gen_place_set(self, place, value_code, value_ty=None):
         if place.kind != "local":
             self._fail(f"escritura de place '{place.kind}' no soportada en 6.1")
         return value_code + local_set(self._local_idx(place.name))
@@ -300,7 +300,9 @@ class BIRCodegenLegacy:
         if st.kind in ("StorageLive", "StorageDead", "Borrow"):
             return b""
         if st.kind == "Assign":
-            return self._gen_place_set(st.place, self._gen_rvalue(st.rvalue))
+            rv = st.rvalue
+            return self._gen_place_set(st.place, self._gen_rvalue(rv),
+                                     self._rv_type(rv))
         if st.kind == "Call":
             return self._gen_call(st)
         self._fail(f"sentencia '{st.kind}' no soportada en 6.1")
@@ -313,7 +315,8 @@ class BIRCodegenLegacy:
                 self._fail(f"`{name}` espera 1 argumento")
             code = self._gen_rvalue(args[0])
             if name == "copy" and st.call_dest is not None:
-                return self._gen_place_set(st.call_dest, code)
+                return self._gen_place_set(st.call_dest, code,
+                                         self._rv_type(args[0]))
             return code + DROP
         if name in ("int", "float", "bool"):
             return self._gen_conversion(name, st)
@@ -337,7 +340,7 @@ class BIRCodegenLegacy:
             if st.call_dest is not None:
                 pass  # destino unit: no hay valor que guardar
         elif st.call_dest is not None:
-            code = self._gen_place_set(st.call_dest, bytes(code))
+            code = self._gen_place_set(st.call_dest, bytes(code), ret_ty)
         else:
             code += DROP
         return bytes(code)
@@ -360,7 +363,7 @@ class BIRCodegenLegacy:
             else:
                 code += i64_const(0) + I64_NE + I64_EXTEND_I32
         if st.call_dest is not None:
-            return self._gen_place_set(st.call_dest, code)
+            return self._gen_place_set(st.call_dest, code, None)
         return code
 
     def _gen_print(self, name, st):

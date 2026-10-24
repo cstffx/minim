@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.codegen_bir import compile_source, BIRCodegenError
@@ -149,7 +150,130 @@ fn ident(p: P) -> P
 fn main()
 	print("struct-ok")
 """, "struct-ok"),
+
+    ("tupla creada, pasada y devuelta", """
+fn ident(t: (int, int)) -> (int, int)
+	t
+
+fn make() -> (int, int)
+	(1, 2)
+
+fn main()
+	let t = make()
+	let u = ident(t)
+	print("tupla-ok")
+""", "tupla-ok"),
+
+    ("producto creado, pasado y devuelto", """
+type P
+	a: int
+	b: int
+
+fn ident(p: P) -> P
+	p
+
+fn make(a: int, b: int) -> P
+	P(a, b)
+
+fn main()
+	let p = make(1, 2)
+	let q = ident(p)
+	print("producto-ok")
+""", "producto-ok"),
+
+    ("variante creada, pasada y devuelta", """
+type Shape
+	case Circle(r: float)
+	case Rect(w: float, h: float)
+
+fn ident(s: Shape) -> Shape
+	s
+
+fn make() -> Shape
+	Shape.Circle(1.5)
+
+fn main()
+	let a = make()
+	let b = ident(Shape.Rect(2.0, 3.0))
+	print("variante-ok")
+""", "variante-ok"),
+
+    ("lista creada y pasada", """
+fn consume(xs: [int])
+	print("lista-ok")
+
+fn main()
+	let xs = [1, 2, 3]
+	let vacia = []
+	consume(xs)
+	consume(vacia)
+""", "lista-oklista-ok"),
+
+    ("agregados anidados", """
+type P
+	a: (int, int)
+	b: int
+
+fn main()
+	let p = P((1, 2), 3)
+	let t = ((4, 5), 6)
+	print("anidado-ok")
+""", "anidado-ok"),
 ]
+
+
+# JS que llama a `main` dos veces y lee los punteros devueltos (una tupla y un
+# producto ocupan los primeros slots de memoria lineal).
+JS_ALLOC = r"""
+const fs=require('fs');
+const w=fs.readFileSync(process.argv[1]);
+const m=new WebAssembly.Module(w);
+const env={print:(x)=>process.stdout.write(String(x)),
+           print_f64:(x)=>process.stdout.write(String(x)),
+           print_str:(p)=>process.stdout.write("S")};
+const inst=new WebAssembly.Instance(m,{env});
+const p1=inst.exports.main();
+const p2=inst.exports.main();
+const dv=new DataView(inst.exports.memory.buffer);
+const out={p1, p2,
+  v1:[String(dv.getBigInt64(p1,true)), String(dv.getBigInt64(p1+8,true))],
+  v2:[String(dv.getBigInt64(p2,true)), String(dv.getBigInt64(p2+8,true))]};
+console.log(JSON.stringify(out));
+"""
+
+
+def check_independent_allocations():
+    """Dos instancias del mismo agregado se guardan en direcciones distintas."""
+    sources = {
+        "tupla": """
+fn main() -> (int, int)
+	(1, 2)
+""",
+        "producto": """
+type P
+	a: int
+	b: int
+
+fn main() -> P
+	P(1, 2)
+""",
+    }
+    for name, src in sources.items():
+        data = compile_source(src)
+        fd, path = tempfile.mkstemp(suffix=".wasm")
+        os.write(fd, data)
+        os.close(fd)
+        try:
+            r = subprocess.run(["node", "-e", JS_ALLOC, path],
+                               capture_output=True, text=True)
+        finally:
+            os.unlink(path)
+        if r.returncode != 0:
+            raise AssertionError(f"{name}: {r.stderr}")
+        got = json.loads(r.stdout)
+        assert got["p1"] != got["p2"], (name, got)
+        assert got["v1"] == ["1", "2"], (name, got)
+        assert got["v2"] == ["1", "2"], (name, got)
 
 
 def main():
@@ -166,6 +290,12 @@ def main():
             print(f"FAIL {name}: esperado {expected!r}, obtenido {got!r}")
         else:
             print(f"ok {name}")
+    try:
+        check_independent_allocations()
+        print("ok agregados sin memoria compartida")
+    except AssertionError as e:
+        failures += 1
+        print(f"FAIL agregados sin memoria compartida: {e}")
     if failures:
         print(f"{failures} fallo(s)")
         return 1

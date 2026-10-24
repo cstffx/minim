@@ -14,6 +14,12 @@ class PlaceMixin:
     def place_of(self, e):
         """Convierte una expresion de lugar (nombre, campo, indice) en Place."""
         if isinstance(e, A.NameExpr):
+            # Campo de self sin cualificar.
+            if (self.owner is not None
+                    and not any(e.name in sc for sc in self.scopes)
+                    and not any(l.name == e.name for l in (self.fn.locals if self.fn else []))
+                    and self._is_owner_field(e.name)):
+                return _field(_local(self._lookup("self")), e.name)
             return _local(self._lookup(e.name))
         if isinstance(e, A.SelfExpr):
             return _local(self._lookup("self"))
@@ -40,7 +46,32 @@ class PlaceMixin:
         for sc in reversed(self.scopes):
             if name in sc:
                 return True
-        return any(l.name == name for l in self.fn.locals)
+        if any(l.name == name for l in (self.fn.locals if self.fn else [])):
+            return True
+        # Campo de self sin cualificar se trata como valor (place).
+        if (self.owner is not None and self._is_owner_field(name)
+                and not any(name in sc for sc in self.scopes)):
+            return True
+        return False
+
+    def _is_owner_field(self, name):
+        if self.owner is None or self.tc is None:
+            return False
+        td = self.tc.type_defs.get(self.owner)
+        if td is None:
+            return False
+        for m in (td.members or []):
+            if m.kind == "field" and getattr(m.node, "name", None) == name:
+                return True
+            if m.kind == "variant":
+                v = m.node
+                for f in (getattr(v, "fields", None) or []):
+                    if getattr(f, "name", None) == name:
+                        return True
+                for mm in (getattr(v, "members", None) or []):
+                    if getattr(mm, "kind", None) == "field" and getattr(getattr(mm, "node", None), "name", None) == name:
+                        return True
+        return False
 
     def _lower_postfix(self, e):
         # Aplanar la cadena de postfijos: primero el base y luego cada op.
@@ -207,22 +238,26 @@ class PlaceMixin:
                    for m in td.members)
 
     def _field_order(self, type_name, variant_name=None):
+        return [f.name for f in self._field_nodes(type_name, variant_name)]
+
+    def _field_nodes(self, type_name, variant_name=None):
+        """Nodos `Field` de un producto o de una variante, en orden."""
         if self.tc is None:
             return []
         td = self.tc.type_defs.get(type_name)
         if td is None:
             return []
         if variant_name is None:
-            return [m.node.name for m in td.members if m.kind == "field"]
+            return [m.node for m in td.members if m.kind == "field"]
         for m in td.members:
             if m.kind == "variant" and m.node.name == variant_name:
                 v = m.node
                 fs = v.fields if v.fields else [mm.node for mm in (v.members or [])
                                                 if isinstance(mm.node, A.Field)]
-                return [f.name for f in fs]
+                return list(fs)
         return []
 
-    def _ordered_args(self, field_names, args):
+    def _ordered_args(self, field_names, args, defaults=None):
         """Ordena argumentos con nombre segun el orden de campos del tipo."""
         positional = []
         named = {}
@@ -235,27 +270,33 @@ class PlaceMixin:
                 positional.append(a)
         out = []
         pi = 0
-        for fname in field_names:
+        for fi, fname in enumerate(field_names):
             if fname in named:
                 out.append(self._lower_value(named[fname]))
             elif pi < len(positional):
                 out.append(self._lower_value(positional[pi]))
                 pi += 1
+            elif defaults is not None and fi < len(defaults) and defaults[fi] is not None:
+                out.append(self._lower_value(defaults[fi]))
         while pi < len(positional):
             out.append(self._lower_value(positional[pi]))
             pi += 1
         return out
 
     def _product_ctor(self, type_name, args, call_expr):
-        fields = self._field_order(type_name)
-        items = self._ordered_args(fields, args) if fields else \
+        nodes = self._field_nodes(type_name)
+        fields = [f.name for f in nodes]
+        defaults = [getattr(f, "default", None) for f in nodes]
+        items = self._ordered_args(fields, args, defaults) if fields else \
             [self._lower_value(self._arg_value(a)) for a in args]
         return Rvalue("aggregate", agg_kind="struct", const_value=type_name,
                       items=items)
 
     def _variant_ctor(self, type_name, variant_name, args, call_expr):
-        fields = self._field_order(type_name, variant_name)
-        items = self._ordered_args(fields, args) if fields else \
+        nodes = self._field_nodes(type_name, variant_name)
+        fields = [f.name for f in nodes]
+        defaults = [getattr(f, "default", None) for f in nodes]
+        items = self._ordered_args(fields, args, defaults) if fields else \
             [self._lower_value(self._arg_value(a)) for a in args]
         return Rvalue("aggregate", agg_kind="variant",
                       const_value=f"{type_name}.{variant_name}", items=items)

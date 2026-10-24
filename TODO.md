@@ -13,24 +13,24 @@ el borrow check y `WasmCodegen` consume el AST. Falta:
       fallback hasta 6.4. Criterio de cierre de 6.2: `hello`, `shapes` y `borrow` dan el
       mismo stdout por `minimc run` y `minimc run --bir`, comparado byte a byte.
 
-  - [ ] 6.2.2 Agregados y memoria lineal. `aggregates.py`: allocator bump-pointer
-        compartido (extraer `_ctor_begin`/`_ctor_end`/`_zero_value` de
-        `tools/codegen/expr/legacy.py`) y `Rvalue("aggregate")` para `tuple`, `list`,
-        `struct` y `variant`. Arreglar el desajuste `items=` vs `agg_fields` del BIR
-        (hoy `Rvalue(...)` lanza TypeError en `ast_to_bir.py:437-451,754`).
+  - [x] 6.2.2 Agregados y memoria lineal. `aggregates.py`: allocator bump-pointer
+        compartido (extraído de `tools/codegen/expr/ctors.py`) y
+        `Rvalue("aggregate")` para `tuple`, `list`, `struct` y `variant`.
+        Desajuste `items=`/`agg_fields` resuelto en la IR de babirusas y en
+        `tools/bir.py` (ambos nombres aceptados; `items` es el canónico).
         Aceptación: `(1, 2)` y `P(1, 2)` se crean, se pasan por parámetro y se devuelven
         sin acceder a campos; dos instancias no comparten memoria.
 
-  - [ ] 6.2.3 Lectura de places proyectados. `places.py`: `_place_type` y
+  - [x] 6.2.3 Lectura de places proyectados. `places.py`: `_place_type` y
         `_gen_place_get` para `FIELD`/`INDEX` y proyecciones anidadas (`a.b[i].c`), con
         load i32/i64/f64 según `wasm_repr` y alineación 8.
         Aceptación: `print(t.0)`, `print(p.b)`, `print(xs[1])`, `print(xs[1].a)`.
 
-  - [ ] 6.2.4 Escritura de places proyectados. `places.py`: `_gen_place_set` para
+  - [x] 6.2.4 Escritura de places proyectados. `places.py`: `_gen_place_set` para
         `FIELD`/`INDEX`, anidados y campos de `self` sin cualificar.
         Aceptación: `p.a = 5`, `xs[0] = 7`, `p.inner.x = 1` se leen de vuelta.
 
-  - [ ] 6.2.5 Strings dinámicos. `rvalues.py`: extraer `_ensure_str_helpers`
+  - [x] 6.2.5 Strings dinámicos. `rvalues.py`: extraer `_ensure_str_helpers`
         (len/concat/eq/cmp) de `expr/legacy.py` a un módulo sin dependencia del AST;
         `_gen_binop` para `str` (`+`, `==`, `!=`, `<`, …); `_storage_wt` devuelve i32.
         Verificar `FStrLit` (hoy se baja como str plano en `ast_to_bir.py:416`) y
@@ -38,7 +38,7 @@ el borrow check y `WasmCodegen` consume el AST. Falta:
         Aceptación: concatenar dentro de un bucle, comparar y `print` del resultado;
         `f"{x}"` imprime el valor interpolado.
 
-  - [ ] 6.2.6 Match sobre sumas. `unaryop tag` en `_rv_type`/`_gen_unaryop` y bindings
+  - [x] 6.2.6 Match sobre sumas. `unaryop tag` en `_rv_type`/`_gen_unaryop` y bindings
         como lecturas de `FIELD` sobre el payload; completar `_pattern_test` de
         `ast_to_bir.py` para que `named_field` y `tuple` dejen de ser catch-all.
         Aceptación: `case Circle(r): print(r)` usando el binding, patrón anidado y

@@ -34,7 +34,7 @@ class Place:
         return (self.kind,)
 
 
-@dataclass
+@dataclass(init=False)
 class Rvalue:
     kind: str
     place: Optional[Place] = None
@@ -48,6 +48,38 @@ class Rvalue:
     cast_type: Optional[Type] = None
     agg_kind: Optional[str] = None
     items: List["Rvalue"] = field(default_factory=list)
+    idx: Optional["Rvalue"] = None
+
+    def __init__(self, kind, place=None, const_type=None, const_value=None,
+                 op=None, a=None, b=None, ref_kind=None, ref_place=None,
+                 cast_type=None, agg_kind=None, items=None, idx=None,
+                 agg_fields=None):
+        # `items` es el nombre canonico del BIR. Se acepta `agg_fields` como
+        # alias de la IR historica de `tools/bir.py` para que ninguna de las
+        # dos formas de construir un agregado lance TypeError.
+        self.kind = kind
+        self.place = place
+        self.const_type = const_type
+        self.const_value = const_value
+        self.op = op
+        self.a = a
+        self.b = b
+        self.ref_kind = ref_kind
+        self.ref_place = ref_place
+        self.cast_type = cast_type
+        self.agg_kind = agg_kind
+        if items is None:
+            items = agg_fields if agg_fields is not None else []
+        self.items = list(items)
+        self.idx = idx
+
+    @property
+    def agg_fields(self):
+        return self.items
+
+    @agg_fields.setter
+    def agg_fields(self, value):
+        self.items = list(value or [])
 
     def used_places(self):
         res = []

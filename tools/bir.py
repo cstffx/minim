@@ -53,7 +53,7 @@ class RvalueKind(IntEnum):
     REF = 4; CAST = 5; AGGREGATE = 6
 
 
-@dataclass
+@dataclass(init=False)
 class Rvalue:
     kind: RvalueKind
     place: Optional[Place] = None
@@ -65,7 +65,34 @@ class Rvalue:
     ref_kind: int = 0              # for REF
     cast_type: Optional[Type] = None
     agg_kind: int = 0
-    agg_fields: List["Rvalue"] = field(default_factory=list)
+    items: List["Rvalue"] = field(default_factory=list)
+
+    def __init__(self, kind, place=None, const_type=None, const_value=None,
+                 op=0, a=None, b=None, ref_kind=0, cast_type=None,
+                 agg_kind=0, items=None, agg_fields=None):
+        # Igual que en `babirusas`: `items` es canonico y `agg_fields` se
+        # mantiene como alias para no romper a los consumidores antiguos.
+        self.kind = kind
+        self.place = place
+        self.const_type = const_type
+        self.const_value = const_value
+        self.op = op
+        self.a = a
+        self.b = b
+        self.ref_kind = ref_kind
+        self.cast_type = cast_type
+        self.agg_kind = agg_kind
+        if items is None:
+            items = agg_fields if agg_fields is not None else []
+        self.items = list(items)
+
+    @property
+    def agg_fields(self):
+        return self.items
+
+    @agg_fields.setter
+    def agg_fields(self, value):
+        self.items = list(value or [])
 
 
 # ---------- Statements ----------

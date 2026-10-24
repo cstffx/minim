@@ -275,9 +275,52 @@ class MatchMixin:
                 return self._tag_test(tmp, sum_name, pat.value), False
             return None, True
         if pat.kind == "variant":
-            return self._tag_test(tmp, sum_name, pat.name), False
-        if pat.kind in ("tuple", "named_field"):
-            return None, True
+            test = self._tag_test(tmp, sum_name, pat.name)
+            type_name = scrut_ty[1] if scrut_ty is not None and scrut_ty[0] == "named" else None
+            fields = self._field_order(type_name, pat.name) if type_name else []
+            sub_tests = []
+            catch_all = True
+            for i, p in enumerate(pat.patterns or []):
+                if p.kind == "named_field":
+                    fname = p.field_name
+                else:
+                    fname = fields[i] if i < len(fields) else str(i)
+                fty = self._field_type(type_name, pat.name, fname)
+                st, sc = self._pattern_test(p, _field(tmp, fname), fty if fty is not None else scrut_ty)
+                if st is not None:
+                    sub_tests.append(st)
+                catch_all = catch_all and sc
+            for st in sub_tests:
+                if test is None:
+                    test = st
+                else:
+                    test = Rvalue("binop", op="&", a=test, b=st)
+            # Un patron de variante nunca es catch-all (solo casa una variante).
+            catch_all = False
+            return test, catch_all
+        if pat.kind == "tuple":
+            catch_all = True
+            test = None
+            for i, p in enumerate(pat.patterns or []):
+                elem = scrut_ty[1][i] if scrut_ty is not None and scrut_ty[0] == "tuple" and i < len(scrut_ty[1]) else None
+                st, sc = self._pattern_test(p, _field(tmp, i), elem)
+                if st is not None:
+                    if test is None:
+                        test = st
+                    else:
+                        test = Rvalue("binop", op="&", a=test, b=st)
+                catch_all = catch_all and sc
+            if test is not None:
+                catch_all = False
+            return test, catch_all
+        if pat.kind == "named_field":
+            fty = None
+            if scrut_ty is not None and scrut_ty[0] == "named":
+                fty = self._field_type(scrut_ty[1], None, pat.field_name)
+            st, sc = self._pattern_test(pat.sub, _field(tmp, pat.field_name), fty)
+            if st is not None:
+                return st, False
+            return None, sc
         return None, True
 
     def _variant_names(self, sum_name):
