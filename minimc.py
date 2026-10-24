@@ -104,7 +104,7 @@ def cmd_build(args):
         program, tc = compile_pipeline(source, want_wasm=True, filename=args.file)
         if args.bir:
             from tools.ast_to_bir import translate_program
-            wasm_bytes = BIRCodegen(translate_program(program, tc)).generate()
+            wasm_bytes = BIRCodegen(translate_program(program, tc), program, tc).generate()
         else:
             cg = WasmCodegen(program, tc)
             wasm_bytes = cg.generate()

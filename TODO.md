@@ -1,52 +1,68 @@
-# TODO — estado real del compilador (fases 6-10)
+# TODO — trabajo pendiente (fases 6-10)
 
-Actualizado: 2026-10-22, sincronizado con `status.md` (fases 0-5 completadas) y verificado
-ejecutando `minimc build`/`run` sobre cada constructo de esta lista.
+Actualizado: 2026-10-23. Solo pendientes; lo completado vive en `status.md`.
 
-El frontend (lexer/parser/resolve/typecheck/core IR/BIR/borrow checker) **ya acepta** toda la
-superficie de `docs/DESIGN.md` que cubren los tests. Lo que queda está en el backend WASM
-(`tools/codegen/`), en el prelude (fase 7), en la validación formal (fase 8) y en la suite de
-tests/benchmarks (fase 9).
+## 1. Fase 6: codegen desde BIR
 
-Estado end-to-end hoy: **2 de 5 `examples/*.mim` compilan y ejecutan** (`hello`, `shapes`);
-`borrow`, `http` y `wordcount` fallan en codegen.
+El pipeline sigue compilando desde el AST elaborado; `minimc build` traduce a BIR solo para
+el borrow check y `WasmCodegen` consume el AST. Falta:
 
-## 1. Fase 6: codegen desde BIR (siguiente)
+- [ ] 6.2 Paridad de tipos compuestos en BIR (pendientes 6.2.2-6.2.8).
+      Los stubs de `tools/codegen_bir/` (`layouts`, `aggregates`, `places`, `rvalues`,
+      `calls`, `cfg`) ya existen: cada subtarea rellena el suyo y `legacy.py` queda como
+      fallback hasta 6.4. Criterio de cierre de 6.2: `hello`, `shapes` y `borrow` dan el
+      mismo stdout por `minimc run` y `minimc run --bir`, comparado byte a byte.
 
-El pipeline sigue compilando desde el AST elaborado. `minimc build` traduce a BIR solo para
-el borrow check; `WasmCodegen` consume el AST. Plan de la fase (ver `PLAN.md`):
+  - [ ] 6.2.2 Agregados y memoria lineal. `aggregates.py`: allocator bump-pointer
+        compartido (extraer `_ctor_begin`/`_ctor_end`/`_zero_value` de
+        `tools/codegen/expr/legacy.py`) y `Rvalue("aggregate")` para `tuple`, `list`,
+        `struct` y `variant`. Arreglar el desajuste `items=` vs `agg_fields` del BIR
+        (hoy `Rvalue(...)` lanza TypeError en `ast_to_bir.py:437-451,754`).
+        Aceptación: `(1, 2)` y `P(1, 2)` se crean, se pasan por parámetro y se devuelven
+        sin acceder a campos; dos instancias no comparten memoria.
 
-- [x] 6.1 Backend BIR para el subset escalar: `int`/`float`/`bool`/`str`/`nil`, locales y
-      temporales tipados desde BIR, `Assign`/`Call`, `Goto`/`SwitchInt`/`Return`, funciones,
-      recursion, `print`/`print_str`/`print_f64`, `StorageLive`/`StorageDead` como no-ops.
-      Implementado en `tools/codegen_bir.py` + `tools/test_bir_codegen.py`; disponible con
-      `minimc build|run --bir`.
-- [ ] 6.2 Paridad de tipos compuestos en BIR: strings dinámicos, `list`, `tuple`, `struct`,
-      sumas, campos/índices/`Place` no-local, agregados y `match` (usa los layouts de
-      `tools/codegen/layouts.py`).
-- [ ] 6.3 Paridad de `map`/`set`, closures y `T?`/`T!` en BIR.
+  - [ ] 6.2.3 Lectura de places proyectados. `places.py`: `_place_type` y
+        `_gen_place_get` para `FIELD`/`INDEX` y proyecciones anidadas (`a.b[i].c`), con
+        load i32/i64/f64 según `wasm_repr` y alineación 8.
+        Aceptación: `print(t.0)`, `print(p.b)`, `print(xs[1])`, `print(xs[1].a)`.
+
+  - [ ] 6.2.4 Escritura de places proyectados. `places.py`: `_gen_place_set` para
+        `FIELD`/`INDEX`, anidados y campos de `self` sin cualificar.
+        Aceptación: `p.a = 5`, `xs[0] = 7`, `p.inner.x = 1` se leen de vuelta.
+
+  - [ ] 6.2.5 Strings dinámicos. `rvalues.py`: extraer `_ensure_str_helpers`
+        (len/concat/eq/cmp) de `expr/legacy.py` a un módulo sin dependencia del AST;
+        `_gen_binop` para `str` (`+`, `==`, `!=`, `<`, …); `_storage_wt` devuelve i32.
+        Verificar `FStrLit` (hoy se baja como str plano en `ast_to_bir.py:416`) y
+        convertirla en concatenación si `core_ir` no lo hace antes.
+        Aceptación: concatenar dentro de un bucle, comparar y `print` del resultado;
+        `f"{x}"` imprime el valor interpolado.
+
+  - [ ] 6.2.6 Match sobre sumas. `unaryop tag` en `_rv_type`/`_gen_unaryop` y bindings
+        como lecturas de `FIELD` sobre el payload; completar `_pattern_test` de
+        `ast_to_bir.py` para que `named_field` y `tuple` dejen de ser catch-all.
+        Aceptación: `case Circle(r): print(r)` usando el binding, patrón anidado y
+        guarda.
+
+  - [ ] 6.2.7 Llamadas con tipos compuestos. `calls.py`: `Call` a métodos (`Tipo.m`),
+        builtins de colecciones (`push`, `get`, `slice`, `len`) y funciones que
+        reciben/devuelven punteros, incluyendo `func_index` de métodos monomorfizados.
+        Aceptación: `p.move()` muta el receptor, `xs.push(4)`, `print(xs.len)`.
+
+  - [ ] 6.2.8 Paridad AST vs BIR. `tools/test_bir_parity.py`: compila cada
+        `examples/*.mim` por ambas rutas y compara stdout byte a byte, con skip explícito
+        y listado para lo que siga en 6.3. Ampliar `tools/test_bir_codegen.py` con los
+        casos de 6.2.2-6.2.7.
+        Aceptación: `hello`, `shapes` y `borrow` idénticos; `http` y `wordcount` fallan
+        de forma declarada, nunca en silencio.
+
+- [ ] 6.3 Paridad BIR de `map`/`set`, closures y `T?`/`T!`.
 - [ ] 6.4 Conmutar el pipeline por defecto a BIR y retirar el codegen desde AST cuando
       `test_core` + los 5 ejemplos pasen por la ruta BIR (comparación byte a byte del output).
 
-## 2. Gaps de codegen verificados (ruta AST actual)
+## 2. Gaps de codegen (ruta AST actual)
 
-### 2.1 Ya soportado (no tocar salvo regresión)
-
-- [x] `match` sentencia y expresión, guardas, `else`, bindings posicionales/nombrados.
-- [x] `spawn`/`await`/`task[T]` (secuencial), `break`/`continue`.
-- [x] `or`/`or:` con `it`, `?` dentro de funciones que devuelven `T!`, `err(msg, code)`.
-- [x] F-strings (incluye formato `.Nf` y campos `{b.len}`), tuplas y destructuring.
-- [x] Mapas, sets y sus literales; `map[K,V]`/`set[T]` **vacíos** no.
-- [x] Closures `fn`, `move fn`, `it`, `list.map/filter`.
-- [x] `if`/`match` como expresión, lógica cortocircuitada, comparaciones encadenadas.
-- [x] Slicing de `str`, `bytes` y listas; `bytes` y sus métodos básicos.
-- [x] Anchos explícitos `i8..u64`/`f32` (se normalizan, sin truncado real).
-- [x] Tipos producto/suma con métodos, genéricos + traits monomorfizados.
-
-### 2.2 Pendiente en codegen
-
-- [ ] Constructores vacíos `map[K,V]()` y `set[T]()` (bloquea `borrow.mim`).
-- [ ] `drop(x)` / `copy(x)` como llamadas explícitas de sentencia.
+- [ ] `.insert(i, x)` / `.remove(i)` en listas (typecheck rechaza su aridad; §4).
 - [ ] Argumentos con nombre en llamadas a funciones libres (`f(b: 2, a: 1)`); solo se
       reordenan en constructores de producto.
 - [ ] Préstamos que escapan del caso trivial (`&campo`, `&lista[i]` materializando
@@ -56,21 +72,15 @@ el borrow check; `WasmCodegen` consume el AST. Plan de la fase (ver `PLAN.md`):
 
 ## 3. Métodos de `str` (`docs/DESIGN.md` §10)
 
-Implementados: `.len` (como `len(s)`), `.contains`, `.lower`, `.upper`, `.parse[int|float]`.
-
-- [ ] `.words()` (bloquea `wordcount.mim`).
 - [ ] `.lines()`.
 - [ ] `.split(sep)`.
-- [ ] `.trim()`, `.strip(chars)`.
+- [ ] `.strip(chars)`.
 - [ ] `.starts(prefix)`, `.ends(suffix)`.
 - [ ] `.replace(a, b)`.
 - [ ] `.join(sep)`.
 - [ ] `.bytes()`.
 
 ## 4. Métodos de `[T]`
-
-Implementados: `.len`, `.push`, `.pop`, `.get`, `.first`, `.last`, `.sort`,
-`.reverse`, `.slice`, `.map`, `.filter`, `.contains`, `.count`, `.top`.
 
 - [ ] `.insert(i, x)`, `.remove(i)`.
 - [ ] `.fold(init, f)`.
@@ -80,8 +90,8 @@ Implementados: `.len`, `.push`, `.pop`, `.get`, `.first`, `.last`, `.sort`,
 
 ## 5. Módulos del prelude (fase 7)
 
-Nada implementado; requiere definir el contrato de imports WASM del host (§10 y
-`docs/COMPILACION.md`) antes de generar las llamadas.
+Requiere definir el contrato de imports WASM del host (§10 y `docs/COMPILACION.md`)
+antes de generar las llamadas.
 
 - [ ] `print`/`eprint` completos y `assert`/`panic` con span.
 - [ ] `fs` (`read`, `write`, `exists`, …) — bloquea `wordcount.mim`.
@@ -99,8 +109,8 @@ Nada implementado; requiere definir el contrato de imports WASM del host (§10 y
 
 ## 7. Tests y benchmarks (fase 9)
 
-- [ ] Suite por fase end-to-end con salida esperada (hoy `test_core` cubre 17 casos).
-- [ ] `examples/*.mim` al 100 % (2/5 hoy).
+- [ ] Suite por fase end-to-end con salida esperada.
+- [ ] `examples/*.mim` al 100 % por ambas rutas de codegen.
 - [ ] Benchmarks de tokens (`tools/measure.py`, requiere `tiktoken`).
 - [ ] `tools/test_borrow.py` y `tools/test_cases_formal.py` citados en `CLAUDE.md` no
       existen; o se crean o se corrige la doc.
@@ -111,21 +121,18 @@ Nada implementado; requiere definir el contrato de imports WASM del host (§10 y
 - [ ] Indexador `.mimidx` con consultas LLM (fase 1 hecha; faltan `--refs` sobre cuerpos).
 - [ ] Optimizaciones BIR (constant folding, dead code) antes del codegen.
 
-## 9. Qué bloquea cada ejemplo (verificado)
+## 9. Qué bloquea cada ejemplo
 
 | Ejemplo | Falla en | Sección |
 |---|---|---|
-| `examples/hello.mim` | — (ya compila) | — |
-| `examples/shapes.mim` | — (ya compila) | — |
-| `examples/borrow.mim` | `map[str, int]()` vacío | §2.2 |
 | `examples/http.mim` | `net`/`json` del prelude | §5 |
-| `examples/wordcount.mim` | `fs.read`/`env.arg` y `.words()`/`.trim()`/`.strip()` | §3, §5 |
+| `examples/wordcount.mim` | `fs.read`/`env.arg` y `.strip()` | §3, §5 |
 
 ## 10. Orden sugerido
 
-1. `map[...]()`/`set[...]()` vacíos + `.insert/.remove` → `borrow.mim` compila.
-2. `str.words/lines/split/trim/strip` → deja `wordcount.mim` a un paso.
-3. Contrato host + `fs`/`env` → `wordcount.mim` compila.
-4. `net`/`json` → `http.mim` compila.
+1. `.lines`/`.split`/`.strip` (§3) → deja `wordcount.mim` a un paso.
+2. Contrato host + `fs`/`env` → `wordcount.mim` compila.
+3. `net`/`json` → `http.mim` compila.
+4. `.insert(i, x)`/`.remove(i)` en listas y resto de §4 (paridad de colecciones).
 5. Paridad BIR completa (§1, 6.2-6.4) y conmutar el pipeline.
 6. Formal, benchmarks y detalles finos.

@@ -307,6 +307,21 @@ fn main()
 	spawn work(0)
 	print(f"{v} {await t2}")
 """, "42 10"),
+
+    ("metodos: campos implicitos de self y llamada sin parentesis", """
+type Buf
+	data: [int] = []
+	fn push(var self, x: int)
+		data.push(x)
+	fn len(self) -> int
+		data.len
+
+fn main()
+	var b = Buf()
+	b.push(1)
+	b.push(2)
+	print(f"{b.len}")
+""", "2"),
 ]
 
 

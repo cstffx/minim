@@ -137,6 +137,18 @@ fn main()
     ("cuerpo de modulo sin main", """
 print("top-level")
 """, "top-level"),
+
+    ("firma con struct por valor", """
+type P
+	a: int
+	b: str
+
+fn ident(p: P) -> P
+	p
+
+fn main()
+	print("struct-ok")
+""", "struct-ok"),
 ]
 
 

@@ -1,88 +1,60 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Spec del repo en formato FlatSpec. Léela entera antes de tocar nada.
 
-## STATUS
-- Mantener `status.md` actualizado a medida que se avanza: marcar tareas completadas y anotar bloqueos.
-- Todo agente que modifique el repo debe actualizar `status.md` antes de commitear.
-- Si un agente encuentra la necesidad de un paso que no esta en `PLAN.md`, debe actualizar y expandir el plan.
+```text
+behavior of "Minim"
+  it is "un lenguaje estático (.mim) con memoria sin GC (ownership + borrow, estilo Rust sin
+         lifetimes) que compila a WASM"
+  it is "spec-first: docs/*.md es normativo, tools/*.py es la implementación de referencia en
+         Python, no el compilador de producción"
+  it is "optimizado para mínimo coste en tokens BPE por constructo"
 
-## IDENTITY
-- Minim: token-minimal statically-typed language, `.mim` files, compiles to WASM.
-- Design axis: minimize BPE-token cost per construct while keeping memory safety w/o GC (ownership+borrow, Rust-like, lifetime-free).
-- Spec-first repo: `docs/*.md` are normative; `tools/*.py` is the reference implementation (Python), not production compiler.
-- No `pub`, no `mut`, no lifetimes, no overloading, no `self.` required, no `;`/`{}`. Tabs only for indent (spaces+tabs mixed = lex error).
+behavior of "una sesión que empieza"
+  it should "leer status.md (qué está hecho y qué está roto) y TODO.md (siguiente trabajo)"
+  it should "leer docs/DESIGN.md para el lenguaje y docs/OWNERSHIP.md + docs/SOUNDNESS.md para el
+             borrow checker y sus agujeros conocidos (A1-A9)"
+  it should "usar examples/*.mim como corpus de parseo y formal/CASES.md como casos canónicos
+             aceptar/rechazar"
+  it should "consultar PLAN.md antes de inventar pasos nuevos"
 
-## PIPELINE (stage -> implementation -> governing spec)
-1. Lex          -> `tools/lexer.py`      -> `docs/TOKENS.md`, `docs/DESIGN.md` §1-2 (INDENT/DEDENT like Python, tab-only)
-2. Parse        -> `tools/parser.py`     -> `docs/grammar.ebnf`, `docs/DESIGN.md` §3-6 (recursive descent, LL(2))
-3. Resolve      -> `tools/resolve.py`    -> `docs/INDEXACION.md` (names/scopes, module symbol table; phase 2a)
-4. Core IR      -> `tools/core_ir.py`    -> `docs/CORE-IR.md` (desugars `for`->`while`, surface->reduced AST)
-5. Typecheck    -> `tools/typecheck.py`  -> `docs/DESIGN.md` §7 (types; phase 2b; no overload, structural typing)
-6. Borrow check -> `babirusas/src/borrowir` -> `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md` (NLL-style, intra-procedural)
-7. Codegen WASM -> `tools/codegen/` (desde AST) + `tools/codegen_bir.py`
-                  (desde BIR, fase 6.1 escalar) -> `docs/COMPILACION.md` §2
-8. Encode       -> `tools/wasm_encoder.py` -> raw wasm binary sections (types/funcs/exports/code)
-- Also: `tools/index.py` implements fase-1 signature scan (`.mimidx`) per `docs/INDEXACION.md` / `docs/INDICE-LLM.md`.
-- `tools/measure.py`, `tools/micro.py`: token-cost measurement vs Python/Rust (needs `tiktoken`, not installed by default).
+behavior of "el pipeline"
+  it should "ir en este orden: lex -> parse -> resolve -> core IR -> typecheck -> BIR+borrow ->
+             codegen -> encode"
+  it should "mapear cada etapa a: tools/lexer.py, tools/parser.py, tools/resolve.py,
+             tools/core_ir.py, tools/typecheck.py, tools/ast_to_bir.py + tools/bir.py +
+             babirusas/src/borrowir, tools/codegen/ + tools/codegen_bir/,
+             tools/wasm_encoder.py"
 
-## COMPILATION MODEL (docs/COMPILACION.md)
-- 2-pass compile: (1) signature scan O(declarations), column-0 keywords only, no body parse; (2) one top-down pass per body -> IR, emitting borrow check + drops inline.
-- No forward declarations needed — signatures are all known before any body compiles.
-- Return type inferred from body (safe because phase 1 signatures resolve forward calls).
-- Monomorphization is memoized per compilation unit; traits dispatch statically (no vtable/`dyn` in v0.1).
-- Incremental "firewall": interface hash = hash of signatures only; changing a body never invalidates importers.
-- Backends: stack bytecode interpreter (v0.1, `.mimo`) -> Cranelift native (v0.2) -> LLVM (v0.3). This repo only implements WASM codegen, not `.mimo`.
-- Determinism required: same source + compiler version -> byte-identical artifact.
+behavior of "la CLI"
+  it should "compilar con python3 minimc.py build <f.mim> [-o out.wasm] [--bir]"
+  it should "ejecutar con python3 minimc.py run <f.mim>"
+  it should "validar sin codegen con python3 minimc.py check <f.mim>"
 
-## OWNERSHIP / BORROW INVARIANTS (condensed from docs/OWNERSHIP.md + docs/SOUNDNESS.md)
-- One owner per value; drop is deterministic, reverse declaration order, no GC.
-- 3 param/receiver modes, mode is part of signature (never inferred from body): bare = shared borrow, `var` = unique borrow, `move` = ownership transfer.
-- R1-R7 borrow rules (borrow.py enforces): unique excludes all else; shared unlimited; borrow can't outlive owner; use-after-move is error; can't return borrow of a local; borrow ends at last use (NLL-style).
-- Copy types: all-copyable-field products (int/float/bool/str/bytes/nil); everything else moves. No partial moves allowed in v0.1 (whole-value move only).
-- Closures do not escape in v0.1 (can't be returned/stored) — this is what keeps capture-by-borrow sound.
-- `spawn` transfers (implicit move) all args; no live borrow may cross `await` (I5, replaces Send/Sync).
-- Borrow checker is NOT proven sound (no formal semantics/soundness proof yet) — see `docs/SOUNDNESS.md` for known holes (A1-A9) and `docs/FORMAL.md` for the proof plan. Treat ownership rules as "best-effort spec," not verified.
-- §10 of SOUNDNESS.md: exclusivity is by PATH (`overlap()` on field paths), not by whole-owner — `swap(p.a, p.b)` is sound and accepted; `swap(p.a, p.a)` rejected. Confirm `babirusas/src/borrowir/borrow.py` matches this if touching it.
-- A9 (drop ordering on early-exit paths `?`/`or:`/`return`/`break`) is explicitly UNSPECIFIED — be careful extending borrow.py around early returns.
+behavior of "los tests"
+  it should "invocarse desde la raíz como módulo: python3 -m tools.test_parser, test_borrow,
+             test_cases_formal, test_codegen, test_encoder, test_struct, test_bir_codegen,
+             test_bir_layouts, test_core, test_ast_to_bir"
+  it must not "invocarse como python3 tools/test_X.py: varios importan tools.X y necesitan la raíz
+               en sys.path"
+  it must "tener en cuenta que los bloques de código de docs/*.md son fixtures ejecutables de
+           test_parser.py y deben ser Minim válido"
 
-## CLI
-- `python3 minimc.py check <file.mim>` — parse + resolve + typecheck + borrow check, errors only, no codegen.
-- `python3 minimc.py build <file.mim> [-o out.wasm]` — full pipeline, writes a `.wasm` module.
-- Single entrypoint wrapping stages 1-8 above; exits 1 with `FAIL [<stage>]` + error list on the first failing stage.
+behavior of "el código .mim"
+  it must "indentar solo con tabs; mezclar espacios y tabs es error léxico"
+  it must "declarar el modo de params y receptores en la firma (var / move / desnudo) y nunca
+           inferirlo del cuerpo"
+  it must not "usar pub, mut, lifetimes, overloading, self. obligatorio, ; ni {}"
+  it must "mantener un nombre = un símbolo por módulo (sin sobrecarga de funciones ni operadores)"
+  it must not "guardar borrows en campos de un type"
 
-## RUNNING TESTS
-- No pytest — these are standalone scripts with their own runner/`__main__` + `sys.exit(1)` on failure.
-- Invoke as a module from the repo root (NOT `python3 tools/test_X.py` — some import as `tools.X` and need the root on `sys.path`):
-  - `python3 -m tools.test_parser` — parses every `.mim` in `examples/` + every python code-block embedded in `docs/OWNERSHIP.md`, `docs/SOUNDNESS.md`, `docs/APRENDER-DEMOSTRACIONES.md`, `formal/CASES.md`.
-  - `python3 -m tools.test_borrow` — crash-only conformance (does NOT check verdicts).
-  - `python3 -m tools.test_cases_formal` — checks the borrow checker's actual RECHAZAR/ACEPTAR verdict against every canonical case in `formal/CASES.md`.
-  - `python3 -m tools.test_bir_codegen` — backend BIR (fase 6.1)
-  - `python3 -m tools.test_codegen`
-  - `python3 -m tools.test_encoder`
-  - `python3 -m tools.test_struct`
-- Run all: `for m in test_parser test_borrow test_cases_formal test_codegen test_encoder test_struct; do python3 -m tools.$m || break; done`
-- `docs/*.md` embedded code blocks are part of the conformance surface — editing examples in docs can break `test_parser.py`.
-- Known gap: `examples/wordcount.mim` currently fails borrow check (partial moves, not supported in v0.1) — `test_borrow.py` doesn't catch this since it only checks for crashes, not clean verdicts.
+behavior of "cualquier cambio de diseño"
+  it must "respetar OWTDI: una sola forma canónica por constructo, sin sintaxis alternativa"
+  it must "preservar el determinismo: misma fuente + versión -> artefacto byte-idéntico"
 
-## BENCHMARKS
-- `tools/bench/` and `tools/bench2/`: same program in `.mim`/`.py`/`.rs` (+ typed python variant) for perf/token comparison (a_counter, b_shapes, c_total, d_borrow, wordcount).
-- `tools/measure.py` / `tools/micro.py`: BPE token-cost comparisons; require `pip install tiktoken` (not present in this env by default).
-- `formal/rustcases/run.sh`: feeds `formal/rustcases/*.rs` (all safe programs) through installed `rustc` to catalogue what Rust accepts/rejects, as a baseline for Minim's borrow checker ambitions (`RUSTC=... sh formal/rustcases/run.sh`).
-
-## REPO LAYOUT
-- `docs/` — normative spec: DESIGN.md (language), OWNERSHIP.md + SOUNDNESS.md (borrow checker + its proof status), CORE-IR.md, COMPILACION.md (compile/incremental model), INDEXACION.md + INDICE-LLM.md (symbol index for LLM queries), TOKENS.md (token-cost rationale), grammar.ebnf, FORMAL.md (proof plan), APRENDER-DEMOSTRACIONES.md, INDICE-LLM.md.
-- `tools/` — Python reference implementation of the pipeline + tests (`test_*.py`) + measurement scripts.
-- `formal/` — CASES.md (witness programs: must-accept/must-reject) + `rustcases/*.rs` (rustc baseline comparison).
-- `examples/` — sample `.mim` programs (`hello.mim`, `shapes.mim`, `borrow.mim`, `http.mim`, `wordcount.mim`) used as parser conformance corpus.
-- `tools/bench/`, `tools/bench2/` — cross-language (mim/py/rs) benchmark sources.
-
-## CRITICAL CONVENTIONS / GOTCHAS
-- **One way to do things (OWTDI)** is a hard design principle — do not add alternate syntax for something that already has a canonical form.
-- Mode on params/receivers (`var`/`move`/bare) is part of the signature and must NEVER be inferred from the body — this is load-bearing for the incremental firewall and index correctness (A1 in SOUNDNESS.md was exactly this bug).
-- Tabs only for indentation in real `.mim` source; mixed space/tab is a lex error. (Docs prose examples use 4 spaces for readability only — don't copy that into `examples/*.mim`.)
-- No function/operator overloading: one name = one symbol per module. Don't introduce overloaded builtins.
-- No `self.` required inside methods — bare names resolve local-first then field; don't require/add `self.` prefixes in generated code or examples.
-- Borrows are never stored in struct fields (v0.1 constraint) — this is what eliminates lifetime syntax; don't design APIs that stash `&T` in a `type`.
-- The canonical formatter (`minim fmt`, not yet in `tools/`) defines one true byte representation; if implementing it, it must be idempotent and match `docs/DESIGN.md` §11 exactly (interface hash and caching depend on determinism).
-- `docs/*.md` code blocks are executable test fixtures (via `test_parser.py`) — keep them syntactically valid Minim when editing docs.
+behavior of "el flujo de trabajo"
+  it should "actualizar status.md al avanzar y ampliar PLAN.md si aparece un paso no previsto"
+  it should "commitear lo pendiente antes de empezar trabajo nuevo"
+  it must not "hacer commit automáticamente"
+  it must "mantener los comentarios de código en dos líneas como máximo"
+```

@@ -29,6 +29,7 @@ from tools.wasm_encoder import (
     WasmEncoder, i32_const, i64_const, f64_const, local_get, local_set,
     uleb128, BLOCK, LOOP, END, RETURN, DROP, BLK_VOID,
 )
+from .layouts import LayoutError, wasm_repr
 
 
 class BIRCodegenError(Exception):
@@ -94,15 +95,10 @@ _PTR_KINDS = ("str", "bytes")
 
 def _storage_wt(ty):
     """Tipo wasm para un local/param. `unit` ocupa un i64 dummy."""
-    if ty is None:
-        raise BIRCodegenError("tipo BIR desconocido")
-    if ty.kind in ("i64", "bool", "unit", "unknown"):
-        return WasmEncoder.I64
-    if ty.kind == "f64":
-        return WasmEncoder.F64
-    if ty.kind in _PTR_KINDS:
-        return WasmEncoder.I32
-    raise BIRCodegenError(f"codegen BIR no soporta el tipo '{ty.kind}' todavia")
+    try:
+        return wasm_repr(ty)
+    except LayoutError as e:
+        raise BIRCodegenError(str(e))
 
 
 def _result_wt(ty):
@@ -111,11 +107,12 @@ def _result_wt(ty):
     return _storage_wt(ty)
 
 
-class BIRCodegen:
+class BIRCodegenLegacy:
     """Traduce una lista de `Function` BIR a un modulo wasm."""
 
-    def __init__(self, functions):
+    def __init__(self, functions, program=None, tc=None):
         self.functions = list(functions)
+        self.build_layouts(program, tc)
         self.enc = WasmEncoder()
         self.enc.add_memory(1)
         self.enc.add_export_memory("memory")
@@ -535,8 +532,12 @@ class BIRCodegen:
 
 # ---- pipeline de conveniencia ----
 
-def prepare_functions(source, filename=None):
-    """parse -> modulos -> typecheck -> elaborate -> typecheck -> borrow -> BIR."""
+def prepare_program(source, filename=None):
+    """parse -> modulos -> typecheck -> elaborate -> typecheck -> borrow -> BIR.
+
+    Devuelve `(functions, program, tc)`: el codegen BIR necesita el programa y
+    el typechecker para calcular layouts y firmas de metodos.
+    """
     program = parse(source)
     from tools.modules import load_modules
     base = os.path.dirname(os.path.abspath(filename)) if filename else os.getcwd()
@@ -553,9 +554,17 @@ def prepare_functions(source, filename=None):
     borrow_errors = borrow_check_program(program, tc)
     if borrow_errors:
         raise BIRCodegenError(borrow_errors[0])
-    return translate_program(program, tc)
+    return translate_program(program, tc), program, tc
+
+
+def prepare_functions(source, filename=None):
+    """Solo las funciones BIR (compatibilidad con los tests de 6.1)."""
+    functions, _program, _tc = prepare_program(source, filename)
+    return functions
 
 
 def compile_source(source, filename=None):
-    """Compila con el backend BIR (subset escalar)."""
-    return BIRCodegen(prepare_functions(source, filename)).generate()
+    """Compila con el backend BIR."""
+    from .core import BIRCodegen
+    functions, program, tc = prepare_program(source, filename)
+    return BIRCodegen(functions, program, tc).generate()

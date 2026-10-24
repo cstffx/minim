@@ -12,6 +12,31 @@ CMP_OPS = {"==", "!=", "<", "<=", ">", ">=", "in", "is", "is not"}
 
 
 class StmtMixin:
+        def _expr_is_void(self, e, qname):
+            """True when evaluating `e` as a statement leaves no value on the stack."""
+            if not (isinstance(e, Postfix) and e.ops and e.ops[-1][0] == "call"):
+                return False
+            if isinstance(e.base, NameExpr):
+                name = e.base.name
+                if name in ("print", "eprint", "assert", "panic"):
+                    return True
+                ret = getattr(self, "func_ret", {}).get(name)
+                return ret is None or ret == NIL
+            if isinstance(e.base, Postfix) and e.base.ops and e.base.ops[-1][0] == "field":
+                method = e.base.ops[-1][1]
+                recv_ty = self._tc_type(e.base.base, qname)
+                if isinstance(recv_ty, tuple) and recv_ty[0] in ("list", "set", "map"):
+                    return method in ("push", "add", "insert", "del", "remove", "clear")
+                if isinstance(recv_ty, tuple) and recv_ty[0] == "named":
+                    ret = getattr(self, "func_ret", {}).get(f"{recv_ty[1]}.{method}")
+                    return ret is None or ret == NIL
+                # unknown receiver: void only if every method named like this is void
+                rets = [r for k, r in getattr(self, "func_ret", {}).items()
+                        if k.endswith("." + method)]
+                if rets:
+                    return all(r is None or r == NIL for r in rets)
+            return False
+
         # ---- structured-control bookkeeping (break/continue) ----
         def _open_block(self, kind):
             if not hasattr(self, "ctrl_stack"):
@@ -148,7 +173,7 @@ class StmtMixin:
                     self._gen_main_call(code)
                     return
                 if (isinstance(st.expr, Postfix) and isinstance(st.expr.base, NameExpr)
-                        and st.expr.base.name == "drop" and st.expr.ops
+                        and st.expr.base.name in ("drop", "copy") and st.expr.ops
                         and st.expr.ops[-1][0] == "call"):
                     args = st.expr.ops[-1][1] or []
                     if args:
@@ -158,7 +183,7 @@ class StmtMixin:
                     return
                 self._gen_expr(st.expr, code, qname)
                 ty = self._tc_type(st.expr, qname)
-                if (not is_last) and ty != NIL:
+                if (not is_last) and ty != NIL and not self._expr_is_void(st.expr, qname):
                     code += DROP
             elif isinstance(st, ReturnStmt):
                 if st.value is not None:
