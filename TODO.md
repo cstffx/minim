@@ -10,7 +10,6 @@ deben vivir en una biblioteca estándar compilada con el mismo pipeline.
 - [ ] Intrínseco `load<T>` para anchos restantes: i8/u8/i16/u16/i32/u32/u64/f32 (hoy i64/f64/ptr).
 - [ ] Intrínseco `store<T>` para anchos restantes: i8/u8/i16/u16/i32/u32/u64/f32 (hoy i64/f64/ptr).
 - [ ] Tipo `ptr` (puntero crudo) en el typechecker y en BIR.
-- [ ] Aritmética de punteros: `ptr + int`, `ptr - int`, `ptr - ptr`.
 - [ ] Intrínsecos aritméticos por ancho: `add_i8`, `sub_u32`, … (o operadores tipados).
 - [ ] Conversiones por ancho: `trunc`, `sext`, `zext`, `ftrunc`, `fext`.
 - [ ] Saturación/truncado real en codegen para i8/u32/f32/… .

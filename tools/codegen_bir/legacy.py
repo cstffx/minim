@@ -259,6 +259,21 @@ class BIRCodegenLegacy:
         op = rv.op
         a = self._rv_type(rv.a)
         b = self._rv_type(rv.b) if rv.b is not None else a
+        if (a is not None and a.kind == "ptr") or (b is not None and b.kind == "ptr"):
+            if a is not None and a.kind == "ptr" and b is not None and b.kind in ("i64","bool","unknown"):
+                left = self._gen_rvalue(rv.a)
+                right = self._gen_rvalue(rv.b) + bytes([0xA7])
+                if op == "-":
+                    return left + right + bytes([0x6B])
+                return left + right + bytes([0x6A])
+            if b is not None and b.kind == "ptr" and a is not None and a.kind in ("i64","bool","unknown") and op == "+":
+                left = self._gen_rvalue(rv.a) + bytes([0xA7])
+                right = self._gen_rvalue(rv.b)
+                return left + right + bytes([0x6A])
+            if a is not None and a.kind == "ptr" and b is not None and b.kind == "ptr" and op == "-":
+                left = self._gen_rvalue(rv.a) + bytes([0xAC])
+                right = self._gen_rvalue(rv.b) + bytes([0xAC])
+                return left + right + bytes([0x7D])
         use_float = (a is not None and a.kind == "f64") or \
                     (b is not None and b.kind == "f64")
         left = self._gen_rvalue(rv.a)

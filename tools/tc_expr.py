@@ -208,6 +208,11 @@ class ExprMixin:
         if rt[0] in ("opt","res"): rt=rt[1]
         if lt==FLOAT or rt==FLOAT:
             if lt in (INT,FLOAT,UNKNOWN) and rt in (INT,FLOAT,UNKNOWN): return FLOAT
+        if (lt==PTR or rt==PTR):
+            if op in ("+","-"):
+                if lt==PTR and rt in (INT,UNKNOWN): return PTR
+                if rt==PTR and lt in (INT,UNKNOWN) and op=="+": return PTR
+                if lt==PTR and rt==PTR and op=="-": return INT
         if lt==INT and rt==INT: return INT
         if lt==STR or rt==STR:
             if op=="+": return STR
