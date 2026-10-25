@@ -95,7 +95,7 @@ class Resolver:
     def _add_prelude(self):
         # Functions
         for name in ("print", "eprint", "range", "min", "max", "abs", "str", "int",
-                     "float", "assert", "panic", "drop", "copy", "len", "err", "alloc", "dealloc"):
+                     "float", "assert", "panic", "drop", "copy", "len", "err", "alloc", "dealloc", "memcpy", "memset"):
             self.module_scope.define(Symbol(name, SymKind.FUNC, None, self.module_scope))
         # Types
         for name in ("int", "float", "bool", "str", "bytes", "nil", "map", "set",

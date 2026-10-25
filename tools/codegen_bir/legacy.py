@@ -346,6 +346,31 @@ class BIRCodegenLegacy:
             if st.call_dest is not None:
                 pass
             return bytes(code)
+        if name == "memcpy":
+            if len(args) != 3:
+                self._fail("`memcpy` espera 3 argumentos")
+            code = bytearray()
+            code += self._gen_rvalue(args[0])
+            code += self._gen_rvalue(args[1])
+            code += self._gen_rvalue(args[2])
+            code += bytes([0xA7])  # i32.wrap_i64
+            code += bytes([0xFC, 0x0A, 0x00, 0x00])  # memory.copy
+            if st.call_dest is not None:
+                pass
+            return bytes(code)
+        if name == "memset":
+            if len(args) != 3:
+                self._fail("`memset` espera 3 argumentos")
+            code = bytearray()
+            code += self._gen_rvalue(args[0])
+            code += self._gen_rvalue(args[1])
+            code += bytes([0xA7])  # i32.wrap_i64 (v)
+            code += self._gen_rvalue(args[2])
+            code += bytes([0xA7])  # i32.wrap_i64 (n)
+            code += bytes([0xFC, 0x0B, 0x00])  # memory.fill
+            if st.call_dest is not None:
+                pass
+            return bytes(code)
         if name not in self.sigs:
             self._fail(f"llamada a funcion desconocida '{name}' (prelude/fase 7?)")
         typeidx, ret_ty = self.sigs[name]
