@@ -34,6 +34,8 @@ class ExprMixin:
             if name in ("drop",): return F((UNKNOWN,),NIL,(),"drop")
             if name in ("copy",): return F((UNKNOWN,),UNKNOWN,(),"copy")
             if name in ("alloc",): return F((INT,),PTR,(),"alloc")
+            if name in ("load",): return F((PTR,INT),V("T"),("T",),"load")
+            if name in ("store",): return F((PTR,INT,V("T")),NIL,("T",),"store")
             if name in ("dealloc",): return F((PTR,),NIL,(),"dealloc")
             if name in ("memcpy",): return F((PTR,PTR,INT),NIL,(),"memcpy")
             if name in ("memset",): return F((PTR,INT,INT),NIL,(),"memset")
@@ -380,6 +382,7 @@ class ExprMixin:
         if builtin in ("float",): return FLOAT
         if builtin in ("str",): return STR
         if builtin in ("alloc",): return PTR
+        if builtin in ("load",): return ret if ret is not None else UNKNOWN
         if builtin in ("dealloc",): return NIL
         if builtin in ("memcpy","memset"): return NIL
         if builtin in ("len",): return INT

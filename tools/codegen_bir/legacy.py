@@ -371,6 +371,43 @@ class BIRCodegenLegacy:
             if st.call_dest is not None:
                 pass
             return bytes(code)
+        if name in ("load_i64", "load_f64", "load_ptr"):
+            if len(args) != 2:
+                self._fail(f"`{name}` espera 2 argumentos")
+            code = bytearray()
+            # addr = ptr + off
+            code += self._gen_rvalue(args[0])
+            code += self._gen_rvalue(args[1])
+            code += bytes([0xA7])  # i32.wrap_i64
+            code += bytes([0x6A])  # i32.add
+            if name == "load_i64":
+                code += bytes([0x29]) + uleb128(3) + uleb128(0)  # i64.load
+            elif name == "load_f64":
+                code += bytes([0x2B]) + uleb128(3) + uleb128(0)  # f64.load
+            else:
+                code += bytes([0x28]) + uleb128(2) + uleb128(0)  # i32.load
+            if st.call_dest is not None:
+                return self._gen_place_set(st.call_dest, bytes(code), None)
+            return bytes(code) + DROP
+        if name in ("store_i64", "store_f64", "store_ptr"):
+            if len(args) != 3:
+                self._fail(f"`{name}` espera 3 argumentos")
+            code = bytearray()
+            code += self._gen_rvalue(args[0])
+            code += self._gen_rvalue(args[1])
+            code += bytes([0xA7])  # i32.wrap_i64
+            code += bytes([0x6A])  # i32.add
+            code += self._gen_rvalue(args[2])
+            if name == "store_i64":
+                code += bytes([0x37]) + uleb128(3) + uleb128(0)  # i64.store
+            elif name == "store_f64":
+                code += bytes([0x39]) + uleb128(3) + uleb128(0)  # f64.store
+            else:
+                code += bytes([0xA7])  # i32.wrap_i64 (value ptr)
+                code += bytes([0x36]) + uleb128(2) + uleb128(0)  # i32.store
+            if st.call_dest is not None:
+                pass
+            return bytes(code)
         if name not in self.sigs:
             self._fail(f"llamada a funcion desconocida '{name}' (prelude/fase 7?)")
         typeidx, ret_ty = self.sigs[name]

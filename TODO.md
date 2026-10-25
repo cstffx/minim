@@ -7,8 +7,8 @@ Actualizado: 2026-10-23. Solo pendientes; lo completado vive en `status.md`.
 El compilador debe exponer solo primitivas de bajo nivel; strings, listas y colecciones
 deben vivir en una biblioteca estándar compilada con el mismo pipeline.
 
-- [ ] Intrínseco `load<T>(p: ptr, off: int) -> T` para T = i8/u8/i16/u16/i32/u32/i64/u64/f32/f64/ptr/bool.
-- [ ] Intrínseco `store<T>(p: ptr, off: int, v: T)`.
+- [ ] Intrínseco `load<T>` para anchos restantes: i8/u8/i16/u16/i32/u32/u64/f32 (hoy i64/f64/ptr).
+- [ ] Intrínseco `store<T>` para anchos restantes: i8/u8/i16/u16/i32/u32/u64/f32 (hoy i64/f64/ptr).
 - [ ] Tipo `ptr` (puntero crudo) en el typechecker y en BIR.
 - [ ] Aritmética de punteros: `ptr + int`, `ptr - int`, `ptr - ptr`.
 - [ ] Intrínsecos aritméticos por ancho: `add_i8`, `sub_u32`, … (o operadores tipados).

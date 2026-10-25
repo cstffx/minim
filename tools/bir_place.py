@@ -191,6 +191,36 @@ class PlaceMixin:
             parts = symbol.split(".")
             first = parts[0]
             last = parts[-1]
+            if symbol == "load":
+                ret_ty = self._t(call_expr)
+                suffix = "i64"
+                if typeargs:
+                    t = typeargs[0]
+                    name = t.name if hasattr(t, "name") else str(t)
+                    if name in ("float","f32","f64"):
+                        suffix = "f64"; ret_ty = ("p", "float")
+                    elif name in ("ptr",):
+                        suffix = "ptr"; ret_ty = ("p", "ptr")
+                    else:
+                        suffix = "i64"; ret_ty = ("p", "int")
+                elif ret_ty is not None and ret_ty[0]=="p" and ret_ty[1]=="float":
+                    suffix = "f64"
+                elif ret_ty is not None and ret_ty[0]=="p" and ret_ty[1]=="ptr":
+                    suffix = "ptr"
+                return self._emit_call(f"load_{suffix}", arg_rvs, ret_ty)
+            if symbol == "store":
+                val_ty = self._t(self._arg_value(args[2])) if len(args) > 2 else None
+                suffix = "i64"
+                if typeargs:
+                    t = typeargs[0]
+                    name = t.name if hasattr(t, "name") else str(t)
+                    if name in ("float","f32","f64"): suffix = "f64"
+                    elif name in ("ptr",): suffix = "ptr"
+                elif val_ty is not None and val_ty[0]=="p" and val_ty[1]=="float":
+                    suffix = "f64"
+                elif val_ty is not None and val_ty[0]=="p" and val_ty[1]=="ptr":
+                    suffix = "ptr"
+                return self._emit_call(f"store_{suffix}", arg_rvs, None)
             if first in ("list", "map", "set") and len(parts) == 1:
                 return self._aggregate_ctor(first, arg_rvs, typeargs, call_expr)
             if first in self._struct_names() and len(parts) == 1:
