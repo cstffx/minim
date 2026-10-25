@@ -7,7 +7,6 @@ Actualizado: 2026-10-23. Solo pendientes; lo completado vive en `status.md`.
 El compilador debe exponer solo primitivas de bajo nivel; strings, listas y colecciones
 deben vivir en una biblioteca estándar compilada con el mismo pipeline.
 
-- [ ] Intrínseco `dealloc(p: ptr)`.
 - [ ] Intrínseco `memcpy(dst: ptr, src: ptr, n: int)`.
 - [ ] Intrínseco `memset(p: ptr, v: int, n: int)`.
 - [ ] Intrínseco `load<T>(p: ptr, off: int) -> T` para T = i8/u8/i16/u16/i32/u32/i64/u64/f32/f64/ptr/bool.

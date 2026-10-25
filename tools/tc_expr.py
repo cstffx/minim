@@ -34,6 +34,7 @@ class ExprMixin:
             if name in ("drop",): return F((UNKNOWN,),NIL,(),"drop")
             if name in ("copy",): return F((UNKNOWN,),UNKNOWN,(),"copy")
             if name in ("alloc",): return F((INT,),PTR,(),"alloc")
+            if name in ("dealloc",): return F((PTR,),NIL,(),"dealloc")
             if name in ("len",): return F((UNKNOWN,),INT,(),"len")
             if name in ("err",): return F((STR,INT),ERRT,(),"err",(False,True))
             if name in ("fs","env","io","net","json","time","rand","math","os","task","rc","arc"): return ("module",name)
@@ -377,6 +378,7 @@ class ExprMixin:
         if builtin in ("float",): return FLOAT
         if builtin in ("str",): return STR
         if builtin in ("alloc",): return PTR
+        if builtin in ("dealloc",): return NIL
         if builtin in ("len",): return INT
         if builtin=="range": return L(INT)
         if builtin in ("print","eprint","assert","panic","drop"): return NIL

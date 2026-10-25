@@ -339,6 +339,13 @@ class BIRCodegenLegacy:
             if st.call_dest is not None:
                 return self._gen_place_set(st.call_dest, bytes(code), None)
             return bytes(code) + DROP
+        if name == "dealloc":
+            if len(args) != 1:
+                self._fail("`dealloc` espera 1 argumento")
+            code = self._gen_rvalue(args[0]) + DROP
+            if st.call_dest is not None:
+                pass
+            return bytes(code)
         if name not in self.sigs:
             self._fail(f"llamada a funcion desconocida '{name}' (prelude/fase 7?)")
         typeidx, ret_ty = self.sigs[name]
