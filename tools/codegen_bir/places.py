@@ -271,7 +271,7 @@ class BIRPlacesMixin:
         elif kind == "i32":
             return _i32_load(offset)
         elif kind in ("str", "bytes", "struct", "tuple", "list", "map", "set",
-                      "func", "closure", "ref"):
+                      "func", "closure", "ref", "ptr"):
             # Pointers are i32
             return _i32_load(offset)
         else:

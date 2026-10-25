@@ -10,7 +10,7 @@ from tools.wasm_encoder import WasmEncoder
 
 # Tipos BIR que ocupan un puntero i32 en memoria lineal.
 PTR_KINDS = ("str", "bytes", "struct", "tuple", "list", "map", "set",
-             "func", "closure", "ref")
+             "func", "closure", "ref", "ptr")
 
 _SCALAR_KINDS = ("i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
                  "bool", "unit", "unknown", "err")

@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.nodes import *
 from tools.resolve import Resolver, Symbol, SymKind
 from tools.tc_types import (
-    INT, FLOAT, BOOL, STR, NIL, UNKNOWN, ERRT, BYTES, INT_WIDTHS, FLOAT_WIDTHS,
+    INT, FLOAT, BOOL, STR, NIL, UNKNOWN, ERRT, BYTES, PTR, INT_WIDTHS, FLOAT_WIDTHS,
     L, M, O, R, N, V, F, TypeCheckError, _bound_name, _tyname, _struct_compat,
     compat, merge_types, apply, _subst_type,
 )
@@ -33,11 +33,12 @@ class ExprMixin:
             if name in ("float",): return F((UNKNOWN,),FLOAT,(),"float")
             if name in ("drop",): return F((UNKNOWN,),NIL,(),"drop")
             if name in ("copy",): return F((UNKNOWN,),UNKNOWN,(),"copy")
+            if name in ("alloc",): return F((INT,),PTR,(),"alloc")
             if name in ("len",): return F((UNKNOWN,),INT,(),"len")
             if name in ("err",): return F((STR,INT),ERRT,(),"err",(False,True))
             if name in ("fs","env","io","net","json","time","rand","math","os","task","rc","arc"): return ("module",name)
             if name in self.module_aliases: return ("module",name)
-            if name in self.type_defs or name in ("int","float","bool","str","bytes","nil","map","set","list"):
+            if name in self.type_defs or name in ("int","float","bool","str","bytes","nil","map","set","list","ptr"):
                 return N(name,())
             sym=self._lookup(scope,name)
             if sym is None:
@@ -375,6 +376,7 @@ class ExprMixin:
         if builtin in ("int",): return INT
         if builtin in ("float",): return FLOAT
         if builtin in ("str",): return STR
+        if builtin in ("alloc",): return PTR
         if builtin in ("len",): return INT
         if builtin=="range": return L(INT)
         if builtin in ("print","eprint","assert","panic","drop"): return NIL

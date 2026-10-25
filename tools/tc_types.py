@@ -4,7 +4,7 @@ from tools.nodes import *
 from tools.parser import parse
 from tools.resolve import Resolver, Symbol, SymKind
 
-INT=("p","int"); FLOAT=("p","float"); BOOL=("p","bool"); STR=("p","str")
+INT=("p","int"); FLOAT=("p","float"); BOOL=("p","bool"); STR=("p","str"); PTR=("p","ptr")
 NIL=("p","nil"); UNKNOWN=("u",); ERRT=("err",); BYTES=("p","bytes")
 # Explicit widths are accepted as spellings of the default machine types.
 INT_WIDTHS={"i8","i16","i32","i64","u8","u16","u32","u64"}
@@ -217,8 +217,8 @@ class TypesMixin:
         return F(params,ret,tuple(tps),None,tuple(defaults))
 
     def _atype(self,t):
-        if isinstance(t,TypeName) and t.name in ("int","float","bool","str","bytes","nil"):
-            _pm={"int":INT,"float":FLOAT,"bool":BOOL,"str":STR,"bytes":BYTES,"nil":NIL}
+        if isinstance(t,TypeName) and t.name in ("int","float","bool","str","bytes","nil","ptr"):
+            _pm={"int":INT,"float":FLOAT,"bool":BOOL,"str":STR,"bytes":BYTES,"nil":NIL,"ptr":PTR}
             return _pm[t.name]
         if isinstance(t,TypeName) and t.name in INT_WIDTHS:
             return INT

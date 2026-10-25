@@ -95,11 +95,11 @@ class Resolver:
     def _add_prelude(self):
         # Functions
         for name in ("print", "eprint", "range", "min", "max", "abs", "str", "int",
-                     "float", "assert", "panic", "drop", "copy", "len", "err"):
+                     "float", "assert", "panic", "drop", "copy", "len", "err", "alloc"):
             self.module_scope.define(Symbol(name, SymKind.FUNC, None, self.module_scope))
         # Types
         for name in ("int", "float", "bool", "str", "bytes", "nil", "map", "set",
-                     "arc", "rc", "task"):
+                     "arc", "rc", "task", "ptr"):
             self.module_scope.define(Symbol(name, SymKind.TYPE, None, self.module_scope))
         # Constants
         for name in ("pi", "e", "true", "false", "nil"):
@@ -476,7 +476,7 @@ class Resolver:
     def _resolve_type(self, typ, scope):
         if isinstance(typ, TypeName):
             if typ.name not in ("int", "float", "bool", "str", "bytes", "nil", "map", "set", "self", "Self",
-                                "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"):
+                                "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "ptr"):
                 sym = self._lookup(typ.name, scope)
                 if sym is None:
                     self.errors.append(ResolveError(f"unbound type {typ.name!r}", typ))

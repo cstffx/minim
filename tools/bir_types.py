@@ -4,7 +4,7 @@ from babirusas.src.borrowir.ir import Type, Place, Rvalue
 
 def _prim(name):
     return {"int": "i64", "i64": "i64", "float": "f64", "f64": "f64",
-            "bool": "bool", "str": "str", "bytes": "bytes",
+            "bool": "bool", "str": "str", "bytes": "bytes", "ptr": "ptr",
             "nil": "unit", "unit": "unit"}.get(name)
 
 
@@ -102,7 +102,7 @@ def _bir_copyable(ty):
     """Copiabilidad segun el tipo BIR (conservador: structs no)."""
     if ty is None:
         return False
-    if ty.kind in ("i64", "f64", "bool", "str", "bytes", "unit", "ref", "func"):
+    if ty.kind in ("i64", "f64", "bool", "str", "bytes", "unit", "ref", "func", "ptr"):
         return True
     if ty.kind == "tuple":
         return all(_bir_copyable(t) for _, t in ty.fields)

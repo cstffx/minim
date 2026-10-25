@@ -28,6 +28,7 @@ from tools.ast_to_bir import translate_program, borrow_check_program
 from tools.wasm_encoder import (
     WasmEncoder, i32_const, i64_const, f64_const, local_get, local_set,
     uleb128, BLOCK, LOOP, END, RETURN, DROP, BLK_VOID,
+    GLOBAL_GET, GLOBAL_SET,
 )
 from .layouts import LayoutError, wasm_repr
 
@@ -90,7 +91,7 @@ _F64_CMP = {
     "<=": F64_LE, ">=": F64_GE,
 }
 
-_PTR_KINDS = ("str", "bytes")
+_PTR_KINDS = ("str", "bytes", "ptr")
 
 
 def _storage_wt(ty):
@@ -322,6 +323,22 @@ class BIRCodegenLegacy:
             return self._gen_conversion(name, st)
         if name in ("print", "eprint"):
             return self._gen_print(name, st)
+        if name == "alloc":
+            self._ensure_allocator()
+            if len(args) != 1:
+                self._fail("`alloc` espera 1 argumento")
+            arg = args[0]
+            code = bytearray()
+            code += GLOBAL_GET(self.heap_global)
+            code += GLOBAL_GET(self.heap_global)
+            code += self._gen_rvalue(arg)
+            # n es i64 -> i32
+            code += bytes([0xA7])  # i32.wrap_i64
+            code += bytes([0x6A])  # i32.add
+            code += GLOBAL_SET(self.heap_global)
+            if st.call_dest is not None:
+                return self._gen_place_set(st.call_dest, bytes(code), None)
+            return bytes(code) + DROP
         if name not in self.sigs:
             self._fail(f"llamada a funcion desconocida '{name}' (prelude/fase 7?)")
         typeidx, ret_ty = self.sigs[name]

@@ -26,7 +26,7 @@ def wasm_type(ty):
                 return WasmEncoder.I64
             if ty[1] == "float":
                 return WasmEncoder.F64
-            if ty[1] in ("str", "bytes"):
+            if ty[1] in ("str", "bytes", "ptr"):
                 return WasmEncoder.I32
         if ty[0] == "named":
             return WasmEncoder.I32
