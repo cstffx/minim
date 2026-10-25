@@ -201,6 +201,8 @@ class PlaceMixin:
                         suffix = "f64"; ret_ty = ("p", "float")
                     elif name in ("ptr",):
                         suffix = "ptr"; ret_ty = ("p", "ptr")
+                    elif name in ("i8","u8","i16","u16","i32","u32","i64","u64","int"):
+                        suffix = name if name != "int" else "i64"; ret_ty = ("p", "int")
                     else:
                         suffix = "i64"; ret_ty = ("p", "int")
                 elif ret_ty is not None and ret_ty[0]=="p" and ret_ty[1]=="float":
@@ -216,6 +218,7 @@ class PlaceMixin:
                     name = t.name if hasattr(t, "name") else str(t)
                     if name in ("float","f32","f64"): suffix = "f64"
                     elif name in ("ptr",): suffix = "ptr"
+                    elif name in ("i8","u8","i16","u16","i32","u32","i64","u64","int"): suffix = name if name != "int" else "i64"
                 elif val_ty is not None and val_ty[0]=="p" and val_ty[1]=="float":
                     suffix = "f64"
                 elif val_ty is not None and val_ty[0]=="p" and val_ty[1]=="ptr":

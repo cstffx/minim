@@ -386,25 +386,40 @@ class BIRCodegenLegacy:
             if st.call_dest is not None:
                 pass
             return bytes(code)
-        if name in ("load_i64", "load_f64", "load_ptr"):
+        if name.startswith("load_"):
+            suffix = name[len("load_"):]
             if len(args) != 2:
                 self._fail(f"`{name}` espera 2 argumentos")
             code = bytearray()
-            # addr = ptr + off
             code += self._gen_rvalue(args[0])
             code += self._gen_rvalue(args[1])
             code += bytes([0xA7])  # i32.wrap_i64
             code += bytes([0x6A])  # i32.add
-            if name == "load_i64":
+            if suffix in ("i64", "u64", "int"):
                 code += bytes([0x29]) + uleb128(3) + uleb128(0)  # i64.load
-            elif name == "load_f64":
+            elif suffix in ("f64", "float"):
                 code += bytes([0x2B]) + uleb128(3) + uleb128(0)  # f64.load
-            else:
+            elif suffix in ("ptr",):
                 code += bytes([0x28]) + uleb128(2) + uleb128(0)  # i32.load
+            elif suffix == "i8":
+                code += bytes([0x30]) + uleb128(0) + uleb128(0)  # i64.load8_s
+            elif suffix == "u8":
+                code += bytes([0x31]) + uleb128(0) + uleb128(0)  # i64.load8_u
+            elif suffix == "i16":
+                code += bytes([0x32]) + uleb128(1) + uleb128(0)  # i64.load16_s
+            elif suffix == "u16":
+                code += bytes([0x33]) + uleb128(1) + uleb128(0)  # i64.load16_u
+            elif suffix == "i32":
+                code += bytes([0x34]) + uleb128(2) + uleb128(0)  # i64.load32_s
+            elif suffix == "u32":
+                code += bytes([0x35]) + uleb128(2) + uleb128(0)  # i64.load32_u
+            else:
+                self._fail(f"load no soporta '{suffix}'")
             if st.call_dest is not None:
                 return self._gen_place_set(st.call_dest, bytes(code), None)
             return bytes(code) + DROP
-        if name in ("store_i64", "store_f64", "store_ptr"):
+        if name.startswith("store_"):
+            suffix = name[len("store_"):]
             if len(args) != 3:
                 self._fail(f"`{name}` espera 3 argumentos")
             code = bytearray()
@@ -412,14 +427,23 @@ class BIRCodegenLegacy:
             code += self._gen_rvalue(args[1])
             code += bytes([0xA7])  # i32.wrap_i64
             code += bytes([0x6A])  # i32.add
-            code += self._gen_rvalue(args[2])
-            if name == "store_i64":
-                code += bytes([0x37]) + uleb128(3) + uleb128(0)  # i64.store
-            elif name == "store_f64":
-                code += bytes([0x39]) + uleb128(3) + uleb128(0)  # f64.store
-            else:
-                code += bytes([0xA7])  # i32.wrap_i64 (value ptr)
+            if suffix in ("ptr",):
+                code += self._gen_rvalue(args[2])
                 code += bytes([0x36]) + uleb128(2) + uleb128(0)  # i32.store
+            else:
+                code += self._gen_rvalue(args[2])
+                if suffix in ("i64", "u64", "int"):
+                    code += bytes([0x37]) + uleb128(3) + uleb128(0)  # i64.store
+                elif suffix in ("f64", "float"):
+                    code += bytes([0x39]) + uleb128(3) + uleb128(0)  # f64.store
+                elif suffix in ("i8", "u8"):
+                    code += bytes([0x3C]) + uleb128(0) + uleb128(0)  # i64.store8
+                elif suffix in ("i16", "u16"):
+                    code += bytes([0x3D]) + uleb128(1) + uleb128(0)  # i64.store16
+                elif suffix in ("i32", "u32"):
+                    code += bytes([0x3E]) + uleb128(2) + uleb128(0)  # i64.store32
+                else:
+                    self._fail(f"store no soporta '{suffix}'")
             if st.call_dest is not None:
                 pass
             return bytes(code)
